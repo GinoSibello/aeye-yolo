@@ -1,7 +1,5 @@
 {
   "system": {
-    "inference_backend": "pytorch",
-    "model": "yolov8n.pt",
     "tensorrt_engine": "yolov8n.engine",
     "device": 0,
     "confidence": 0.4,

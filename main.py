@@ -436,10 +436,9 @@ def main():
 
     PREVIEW_ENABLED = bool(preview_cfg.get("enabled", False))
 
-    requested_backend = system_cfg.get("inference_backend", "pytorch")
-    log(f"Cargando backend de inferencia {requested_backend}...")
-    inference_backend, model = load_detector(system_cfg)
-    log(f"Backend activo: {inference_backend}")
+    log("Cargando engine TensorRT...")
+    model = load_detector(system_cfg)
+    log("Backend activo: tensorrt")
 
     readers = {}
     trackers = {}
@@ -494,7 +493,7 @@ def main():
                     continue
 
                 t0 = time.perf_counter()
-                boxes = detect(inference_backend, model, frame, system_cfg)
+                boxes = detect(model, frame, system_cfg)
                 infer_ms = (time.perf_counter() - t0) * 1000.0
 
                 ids = trackers[cam_id].update(boxes)
@@ -533,7 +532,7 @@ def main():
                     "rule_state": rule_state,
                     "seconds_to_alert": round(remaining, 1) if isinstance(remaining, (int, float)) else None,
                     "inference_ms": round(infer_ms, 1),
-                    "inference_backend": inference_backend,
+                    "inference_backend": "tensorrt",
                     "frame_seq": seq,
                     "last_update": now_iso(),
                     "last_error": reader.last_error,

@@ -3,7 +3,7 @@
 Sistema multi-camara para detectar personas en streams RTSP, medir ocupacion por
 zona y alertar cuando la dotacion permanece fuera de un rango configurado.
 Esta pensado para ejecutarse en NVIDIA Jetson mediante Docker, con inferencia
-PyTorch o TensorRT.
+TensorRT.
 
 > Estado: prototipo operativo. Los IDs `P001`, `P002`, etc. son trayectorias
 > locales y temporales. No identifican empleados ni se conservan entre camaras
@@ -12,7 +12,7 @@ PyTorch o TensorRT.
 ## Funcionalidades
 
 - Lectura concurrente de multiples camaras RTSP.
-- Deteccion de personas con YOLO, usando PyTorch o TensorRT.
+- Deteccion de personas con un engine YOLO optimizado para TensorRT.
 - IDs temporales por camara mediante tracking por centroides.
 - Conteo de personas y reglas de dotacion minima/maxima por zona.
 - Alertas por consola o webhook despues de un tiempo configurable.
@@ -20,7 +20,7 @@ PyTorch o TensorRT.
 - Dashboard web con estado y preview opcional.
 - Persistencia SQLite de muestras de ocupacion e incidentes.
 - API FastAPI para consultar metricas agregadas.
-- Herramientas para exportar TensorRT y comparar latencia.
+- Herramienta para medir la latencia del engine TensorRT.
 
 ## Arquitectura
 
@@ -50,7 +50,7 @@ Dashboard HTTP :8080              API analitica opcional :8000
 - Docker configurado con NVIDIA Container Runtime.
 - Acceso de red desde la Jetson a las camaras RTSP.
 - Almacenamiento suficiente para base de datos, logs e imagenes de alerta.
-- Archivo de pesos YOLO (`.pt`) o engine TensorRT generado en el mismo equipo.
+- Engine TensorRT (`.engine`) generado para la misma Jetson y entorno de software.
 
 La ruta RTSP actual sigue el formato de camaras Hikvision:
 `/Streaming/Channels/<canal>`. Para otra marca se debe adaptar
@@ -73,20 +73,10 @@ Construir la imagen:
 sudo docker build -t aeye-yolo:dev .
 ```
 
-Colocar `yolov8n.pt` en la raiz del proyecto. Tambien puede descargarse mediante
-Ultralytics desde la imagen ya construida:
-
-```bash
-sudo docker run --rm -it \
-  --runtime=nvidia \
-  -v "$PWD:/workspace/aeye-yolo" \
-  -w /workspace/aeye-yolo \
-  aeye-yolo:dev \
-  python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
-```
-
-Los modelos y engines estan excluidos del repositorio debido a su tamano y a
-que un engine TensorRT no es portable entre distintas plataformas.
+Colocar `yolov8n.engine` en la raiz del proyecto. El engine debe haberse generado
+en la misma Jetson y con versiones compatibles de TensorRT, CUDA, JetPack e
+`imgsz`. Los engines estan excluidos del repositorio por su tamano y porque no
+son portables entre plataformas.
 
 ## Credencial de las camaras
 
@@ -114,7 +104,7 @@ La configuracion se divide en cuatro secciones:
 
 | Seccion | Responsabilidad |
 | --- | --- |
-| `system` | Modelo, backend, resolucion, confianza y frecuencias |
+| `system` | Engine TensorRT, resolucion, confianza y frecuencias |
 | `preview` | Dashboard, puerto y calidad JPEG |
 | `alerts` | Salida por consola o webhook |
 | `database` | Activacion y ruta de SQLite |
@@ -216,36 +206,23 @@ Consultas disponibles:
 
 Ver [ANALYTICS.md](ANALYTICS.md) para ejemplos de consultas.
 
-## PyTorch y TensorRT
+## Inferencia TensorRT
 
-El backend se selecciona en `cameras.json`:
-
-```json
-"inference_backend": "pytorch"
-```
-
-o:
+TensorRT es el unico backend de produccion. `cameras.json` indica el archivo:
 
 ```json
-"inference_backend": "tensorrt"
+"tensorrt_engine": "yolov8n.engine"
 ```
 
-Para exportar un engine FP16 en la Jetson:
-
-```bash
-sudo docker run --rm -it \
-  --runtime=nvidia \
-  --network host \
-  --ipc=host \
-  -v "$PWD:/workspace/aeye-yolo" \
-  -w /workspace/aeye-yolo \
-  aeye-yolo:dev \
-  python3 tools/export_tensorrt.py
-```
+AEYE tuvo anteriormente un backend PyTorch que se utilizo como referencia para
+comparar rendimiento. Las pruebas en la Jetson mostraron una mejora suficiente
+con TensorRT y ese camino fue retirado para reducir configuracion y mantenimiento.
+La aplicacion ya no carga archivos `.pt`, no permite seleccionar otro backend y
+no incluye la herramienta de exportacion. El engine debe prepararse fuera del
+runtime y copiarse al proyecto.
 
 Un `.engine` debe regenerarse si cambian la GPU, TensorRT, CUDA, JetPack, la
-imagen Docker o `imgsz`. Ver [TENSORRT.md](TENSORRT.md) para el procedimiento y
-el benchmark comparativo.
+imagen Docker o `imgsz`. Ver [TENSORRT.md](TENSORRT.md).
 
 ## Pruebas
 
@@ -255,11 +232,10 @@ Las pruebas unitarias no requieren camaras conectadas:
 python3 -m unittest discover -v
 ```
 
-Para comparar backends sobre imagenes:
+Para medir TensorRT sobre una imagen:
 
 ```bash
-python3 tools/benchmark_detector.py imagen.jpg --backend pytorch
-python3 tools/benchmark_detector.py imagen.jpg --backend tensorrt
+python3 tools/benchmark_detector.py imagen.jpg
 ```
 
 El dataset auxiliar puede prepararse con:
@@ -278,8 +254,8 @@ api/                 API FastAPI de metricas
 database/            Repositorio SQLite, modelos y migraciones
 identity/            Enlace temporal con identidades externas verificables
 metrics/             Registro de ocupacion y consultas analiticas
-tools/               Exportacion, benchmark y utilidades de Jetson
-vision/              Backends de deteccion YOLO/TensorRT
+tools/               Benchmark y utilidades de Jetson
+vision/              Carga y ejecucion del engine TensorRT
 main.py              Orquestacion RTSP, tracking, reglas y dashboard
 cameras.example.json Plantilla publica de configuracion
 Dockerfile           Entorno NVIDIA reproducible
@@ -312,7 +288,7 @@ reconocimiento facial.
 - `cameras.json` con IPs y configuracion local.
 - Bases SQLite y sus archivos WAL/SHM.
 - Logs e imagenes de evidencia.
-- Pesos `.pt`, modelos `.onnx` y engines `.engine`.
+- Modelos y artefactos de inferencia (`.pt`, `.onnx`, `.engine`, `.plan`).
 - Datasets descargados, caches de Python y copias `.orig`.
 - Archivos `.env` y nombres que contengan `password`.
 

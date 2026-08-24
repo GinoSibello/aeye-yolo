@@ -8,11 +8,7 @@ RUN pip install --no-cache-dir \
     ultralytics-opencv-headless \
     fastapi \
     "uvicorn[standard]" \
-    psutil \
-    "nvidia-modelopt[onnx]" \
-    cupy-cuda13x
-
-RUN pip uninstall -y cupy-cuda12x || true
+    psutil
 
 ENV YOLO_CONFIG_DIR=/tmp/Ultralytics
 ENV AEYE_CONFIG=/workspace/aeye-yolo/cameras.json

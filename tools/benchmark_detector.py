@@ -1,4 +1,4 @@
-"""Mide latencia de un backend sobre una misma imagen después del warmup."""
+"""Mide la latencia del engine TensorRT después del warmup."""
 
 import argparse
 import json
@@ -22,7 +22,6 @@ def main():
     """Carga entradas, ejecuta warmup y reporta latencia y detecciones."""
     parser = argparse.ArgumentParser(description="Benchmark de inferencia AEYE")
     parser.add_argument("input", help="Una imagen JPEG/PNG o una carpeta de imágenes")
-    parser.add_argument("--backend", choices=("pytorch", "tensorrt"), required=True)
     parser.add_argument("--runs", type=int, default=100)
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--config", default="cameras.json")
@@ -31,7 +30,6 @@ def main():
         raise ValueError("runs debe ser >= 1 y warmup >= 0")
 
     cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))["system"]
-    cfg["inference_backend"] = args.backend
     input_path = Path(args.input)
     if input_path.is_dir():
         paths = sorted(
@@ -53,9 +51,9 @@ def main():
     if not frames:
         raise RuntimeError("Ninguna imagen pudo ser leída por OpenCV")
 
-    backend, model = load_detector(cfg)
+    model = load_detector(cfg)
     for index in range(args.warmup):
-        detect(backend, model, frames[index % len(frames)][1], cfg)
+        detect(model, frames[index % len(frames)][1], cfg)
 
     elapsed = []
     detections = []
@@ -63,7 +61,7 @@ def main():
         image_counts = []
         for _ in range(args.runs):
             started = time.perf_counter()
-            boxes = detect(backend, model, frame, cfg)
+            boxes = detect(model, frame, cfg)
             elapsed.append((time.perf_counter() - started) * 1000)
             image_counts.append(len(boxes))
         detections.append((path.name, image_counts[-1]))
@@ -71,7 +69,7 @@ def main():
     ordered = sorted(elapsed)
     p95 = ordered[min(len(ordered) - 1, int(len(ordered) * 0.95))]
     mean = statistics.mean(elapsed)
-    print(f"backend={backend} images={len(frames)} runs_per_image={args.runs} total_runs={len(elapsed)}")
+    print(f"backend=tensorrt images={len(frames)} runs_per_image={args.runs} total_runs={len(elapsed)}")
     print(f"detections_last_run={dict(detections)}")
     print(f"mean_ms={mean:.2f} p95_ms={p95:.2f} min_ms={min(elapsed):.2f}")
     print(f"theoretical_fps={1000.0 / mean:.2f}")
