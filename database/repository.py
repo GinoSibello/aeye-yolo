@@ -32,13 +32,34 @@ class Repository:
         return conn
 
     def migrate(self):
-        """Aplica idempotentemente el esquema inicial de la base de datos."""
-        migration = Path(__file__).parent / "migrations" / "001_initial.sql"
+        """Aplica una sola vez cada migracion SQL, en orden de nombre."""
+        migrations_dir = Path(__file__).parent / "migrations"
         conn = sqlite3.connect(str(self.path))
         try:
-            conn.executescript(migration.read_text(encoding="utf-8"))
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations "
+                "(name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            )
+            for migration in sorted(migrations_dir.glob("*.sql")):
+                applied = conn.execute(
+                    "SELECT 1 FROM schema_migrations WHERE name=?", (migration.name,)
+                ).fetchone()
+                if applied:
+                    continue
+                conn.executescript(migration.read_text(encoding="utf-8"))
+                conn.execute(
+                    "INSERT INTO schema_migrations(name) VALUES(?)", (migration.name,)
+                )
+                conn.commit()
         finally:
             conn.close()
+
+    def close(self):
+        """Cierra la conexion del hilo actual, importante para pruebas y apagado."""
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
+            self._local.conn = None
 
     def execute(self, sql, params=()):
         """Ejecuta una escritura parametrizada y confirma la transaccion."""
@@ -61,12 +82,17 @@ class Repository:
              _iso(seen_at), _iso(seen_at)),
         )
 
-    def add_occupancy(self, camera_id, zone, sampled_at, count, minimum, maximum):
-        """Guarda una muestra de ocupacion y su estado de dotacion."""
-        status = "missing" if count < minimum else "extra" if count > maximum else "ok"
+    def add_occupancy(
+        self, camera_id, zone, sampled_at, raw_count, smoothed_count,
+        minimum, maximum, data_status, status,
+    ):
+        """Guarda conteos crudo/suavizado y distingue datos validos de ausencia."""
         self.execute(
-            "INSERT INTO occupancy_samples(camera_id,zone,sampled_at,people_count,minimum,maximum,status) VALUES(?,?,?,?,?,?,?)",
-            (camera_id, zone, _iso(sampled_at), count, minimum, maximum, status),
+            """INSERT INTO occupancy_samples(
+            camera_id,zone,sampled_at,people_count,raw_people_count,
+            minimum,maximum,data_status,status) VALUES(?,?,?,?,?,?,?,?,?)""",
+            (camera_id, zone, _iso(sampled_at), smoothed_count, raw_count,
+             minimum, maximum, data_status, status),
         )
         return status
 
@@ -81,13 +107,28 @@ class Repository:
         """Marca el instante en que un incidente genero una alerta."""
         self.execute("UPDATE incidents SET alerted_at=? WHERE id=?", (_iso(alerted_at), incident_id))
 
-    def recover_incident(self, incident_id, recovered_at):
-        """Cierra un incidente y calcula su duracion total en segundos."""
+    def recover_incident(self, incident_id, recovered_at, reason="recovered"):
+        """Cierra un incidente, guarda el motivo y calcula su duracion."""
         self.execute(
             """UPDATE incidents SET recovered_at=?,
-            duration_seconds=(julianday(?) - julianday(started_at))*86400 WHERE id=?""",
-            (_iso(recovered_at), _iso(recovered_at), incident_id),
+            duration_seconds=MAX(0,(julianday(?) - julianday(started_at))*86400),
+            closure_reason=? WHERE id=?""",
+            (_iso(recovered_at), _iso(recovered_at), reason, incident_id),
         )
+
+    def open_incidents(self):
+        """Devuelve incidentes que quedaron abiertos en una ejecucion anterior."""
+        return self.query("SELECT * FROM incidents WHERE recovered_at IS NULL ORDER BY id")
+
+    def last_valid_sample(self, camera_id):
+        """Obtiene el ultimo instante verificable de una camara."""
+        rows = self.query(
+            """SELECT sampled_at FROM occupancy_samples
+            WHERE camera_id=? AND data_status='valid'
+            ORDER BY sampled_at DESC LIMIT 1""",
+            (camera_id,),
+        )
+        return rows[0]["sampled_at"] if rows else None
 
     def bind_identity(self, binding):
         """Persiste la asociacion temporal entre track e identidad externa."""

@@ -2,9 +2,7 @@
 
 import cv2
 import json
-import math
 import os
-import sys
 import time
 import threading
 import urllib.parse
@@ -15,7 +13,9 @@ from pathlib import Path
 
 from database.repository import Repository
 from metrics.recorder import MetricsRecorder
+from metrics.staffing import StaffingStateMachine
 from vision.detector import detect, load_detector
+from vision.tracker import ByteTrackAdapter
 
 CONFIG_PATH = Path(os.environ.get("AEYE_CONFIG", "/workspace/aeye-yolo/cameras.json"))
 LOG_DIR = Path(os.environ.get("AEYE_LOG_DIR", "/workspace/aeye-yolo/logs"))
@@ -118,6 +118,8 @@ class CameraReader(threading.Thread):
             except Exception as e:
                 self.connected = False
                 self.last_error = str(e)
+                with self.lock:
+                    self.frame = None
                 log(f"{self.cfg['id']} desconectado: {e}. Reintento en 3s")
                 self._close()
                 STOP_EVENT.wait(3)
@@ -130,113 +132,6 @@ class CameraReader(threading.Thread):
             if self.frame is None:
                 return None, self.frame_seq
             return self.frame.copy(), self.frame_seq
-
-
-class CentroidTracker:
-    """
-    IDs locales y temporales por camara.
-    No identifica la identidad real del empleado.
-    """
-
-    def __init__(self, max_distance=120.0, max_missed=8):
-        """Configura la distancia de asociacion y tolerancia a frames perdidos."""
-        self.max_distance = max_distance
-        self.max_missed = max_missed
-        self.next_id = 1
-        self.tracks = {}
-
-    @staticmethod
-    def center(box):
-        """Calcula el centro de una caja [x1, y1, x2, y2]."""
-        x1, y1, x2, y2 = box
-        return ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
-
-    def update(self, boxes):
-        """Asocia detecciones con tracks existentes y devuelve un ID por caja."""
-        centers = [self.center(b) for b in boxes]
-        assignments = [None] * len(boxes)
-
-        track_ids = list(self.tracks.keys())
-        pairs = []
-        for tid in track_ids:
-            tx, ty = self.tracks[tid]["center"]
-            for di, (dx, dy) in enumerate(centers):
-                dist = math.hypot(tx - dx, ty - dy)
-                if dist <= self.max_distance:
-                    pairs.append((dist, tid, di))
-
-        used_tracks = set()
-        used_dets = set()
-        for _, tid, di in sorted(pairs):
-            if tid in used_tracks or di in used_dets:
-                continue
-            used_tracks.add(tid)
-            used_dets.add(di)
-            assignments[di] = tid
-            self.tracks[tid] = {"center": centers[di], "missed": 0}
-
-        for tid in list(self.tracks.keys()):
-            if tid not in used_tracks:
-                self.tracks[tid]["missed"] += 1
-                if self.tracks[tid]["missed"] > self.max_missed:
-                    del self.tracks[tid]
-
-        for di, center in enumerate(centers):
-            if di not in used_dets:
-                tid = self.next_id
-                self.next_id += 1
-                self.tracks[tid] = {"center": center, "missed": 0}
-                assignments[di] = tid
-
-        return assignments
-
-
-class StaffingRule:
-    """Controla cuanto tiempo una camara permanece fuera del rango esperado."""
-    def __init__(self, camera_cfg, alert_after_seconds):
-        """Inicializa la regla y su estado temporal para una camara."""
-        self.cfg = camera_cfg
-        self.alert_after = alert_after_seconds
-        self.out_since = None
-        self.alert_sent = False
-
-    def evaluate(self, count):
-        """Evalua un conteo y devuelve estado, cuenta regresiva o alerta."""
-        if not self.cfg.get("monitor_staffing", False):
-            return "disabled", None
-
-        minimum = int(self.cfg.get("min_people", 0))
-        maximum = int(self.cfg.get("max_people", 9999))
-        abnormal = count < minimum or count > maximum
-
-        if not abnormal:
-            recovered = self.out_since is not None
-            self.out_since = None
-            self.alert_sent = False
-            return ("recovered" if recovered else "ok"), None
-
-        now = time.monotonic()
-        if self.out_since is None:
-            self.out_since = now
-
-        elapsed = now - self.out_since
-        if elapsed >= self.alert_after and not self.alert_sent:
-            self.alert_sent = True
-            reason = "faltantes" if count < minimum else "sobrantes"
-            return "alert", {
-                "type": "staffing_alert",
-                "camera_id": self.cfg["id"],
-                "camera_name": self.cfg["name"],
-                "zone": self.cfg.get("zone", ""),
-                "reason": reason,
-                "people": count,
-                "expected_min": minimum,
-                "expected_max": maximum,
-                "outside_range_seconds": round(elapsed, 1),
-                "timestamp": now_iso(),
-            }
-
-        return "countdown", max(0, self.alert_after - elapsed)
 
 
 def save_alert_frame(frame, camera_id):
@@ -365,10 +260,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 snapshot = dict(STATE)
             cards = []
             for cam_id, s in snapshot.items():
+                people = s.get("people")
+                people_label = people if people is not None else "sin datos"
                 cards.append(f"""
                 <section class="card">
                   <h2>{cam_id} — {s.get('name','')}</h2>
-                  <p>{s.get('zone','')} | personas: <b>{s.get('people',0)}</b> | {s.get('rule_state','')}</p>
+                  <p>{s.get('zone','')} | personas: <b>{people_label}</b> | {s.get('rule_state','')}</p>
                   <img class="cam" data-cam="{cam_id}" alt="{cam_id}" />
                 </section>
                 """)
@@ -428,6 +325,9 @@ def main():
         metrics_recorder = MetricsRecorder(
             repository, float(system_cfg.get("metrics_sample_every_seconds", 5))
         )
+        interrupted = metrics_recorder.recover_after_restart()
+        if interrupted:
+            log(f"Incidentes interrumpidos por reinicio: {interrupted}")
         log(f"Base de datos: {db_path}")
     cameras = [c for c in cfg["cameras"] if c.get("enabled", False)]
 
@@ -449,8 +349,8 @@ def main():
     for cam in cameras:
         reader = CameraReader(cam)
         readers[cam["id"]] = reader
-        trackers[cam["id"]] = CentroidTracker()
-        rules[cam["id"]] = StaffingRule(cam, float(system_cfg["alert_after_seconds"]))
+        trackers[cam["id"]] = ByteTrackAdapter(system_cfg.get("tracker", {}))
+        rules[cam["id"]] = StaffingStateMachine(cam, system_cfg)
         next_inference[cam["id"]] = 0.0
         last_log[cam["id"]] = 0.0
         with STATE_LOCK:
@@ -459,7 +359,9 @@ def main():
                 "zone": cam.get("zone", ""),
                 "ip": cam["ip"],
                 "connected": False,
-                "people": 0,
+                "data_status": "no_data",
+                "people": None,
+                "raw_people": None,
                 "track_ids": [],
                 "rule_state": "starting",
                 "last_update": None,
@@ -487,22 +389,55 @@ def main():
 
                 frame, seq = reader.latest()
                 if frame is None:
+                    observation = rules[cam_id].no_data()
+                    if metrics_recorder and cam.get("monitor_staffing", False):
+                        metrics_recorder.observe(cam, observation)
                     with STATE_LOCK:
                         STATE[cam_id]["connected"] = reader.connected
+                        STATE[cam_id]["data_status"] = "no_data"
+                        STATE[cam_id]["people"] = None
+                        STATE[cam_id]["raw_people"] = None
+                        STATE[cam_id]["track_ids"] = []
+                        STATE[cam_id]["rule_state"] = "no_data"
+                        STATE[cam_id]["last_update"] = now_iso()
                         STATE[cam_id]["last_error"] = reader.last_error
                     continue
 
-                t0 = time.perf_counter()
-                boxes = detect(model, frame, system_cfg)
-                infer_ms = (time.perf_counter() - t0) * 1000.0
+                try:
+                    t0 = time.perf_counter()
+                    detections = detect(model, frame, system_cfg)
+                    infer_ms = (time.perf_counter() - t0) * 1000.0
+                    tracks = trackers[cam_id].update(detections, frame.shape)
+                except Exception as error:
+                    observation = rules[cam_id].no_data()
+                    if metrics_recorder and cam.get("monitor_staffing", False):
+                        metrics_recorder.observe(cam, observation)
+                    with STATE_LOCK:
+                        STATE[cam_id].update({
+                            "connected": reader.connected,
+                            "data_status": "no_data",
+                            "people": None,
+                            "raw_people": None,
+                            "track_ids": [],
+                            "rule_state": "no_data",
+                            "last_update": now_iso(),
+                            "last_error": f"Inferencia/tracking: {error}",
+                        })
+                    log(f"{cam_id} error de inferencia/tracking: {error}")
+                    continue
 
-                ids = trackers[cam_id].update(boxes)
-                count = len(boxes)
-                rule_state, detail = rules[cam_id].evaluate(count)
+                boxes = [track.box for track in tracks]
+                ids = [track.track_id for track in tracks]
+                raw_count = len(tracks)
+                observation = rules[cam_id].evaluate(raw_count)
+                count = observation.smoothed_count
+                rule_state = observation.rule_state
                 if metrics_recorder and cam.get("monitor_staffing", False):
-                    metrics_recorder.observe_staffing(cam, count)
+                    metrics_recorder.observe(cam, observation)
 
-                if rule_state == "alert" and isinstance(detail, dict):
+                if observation.alert:
+                    detail = dict(observation.alert)
+                    detail["timestamp"] = now_iso()
                     if metrics_recorder:
                         metrics_recorder.mark_alerted(cam_id)
                     try:
@@ -517,17 +452,18 @@ def main():
 
                     send_alert(alert_cfg, detail)
                     remaining = 0
-                elif rule_state == "countdown":
-                    remaining = detail
                 else:
-                    remaining = None
+                    remaining = observation.seconds_to_alert
 
                 state_row = {
                     "name": cam["name"],
                     "zone": cam.get("zone", ""),
                     "ip": cam["ip"],
                     "connected": reader.connected,
+                    "data_status": observation.data_status,
                     "people": count,
+                    "raw_people": raw_count,
+                    "detections": len(detections),
                     "track_ids": [f"P{x:03d}" for x in ids],
                     "rule_state": rule_state,
                     "seconds_to_alert": round(remaining, 1) if isinstance(remaining, (int, float)) else None,
@@ -552,7 +488,8 @@ def main():
 
                 if loop_now - last_log[cam_id] >= float(system_cfg.get("log_every_seconds", 10)):
                     log(
-                        f"{cam_id} personas={count} IDs={[f'P{x:03d}' for x in ids]} "
+                        f"{cam_id} personas={count} crudo={raw_count} "
+                        f"IDs={[f'P{x:03d}' for x in ids]} "
                         f"estado={rule_state} infer={infer_ms:.1f}ms"
                     )
                     last_log[cam_id] = loop_now
@@ -566,6 +503,8 @@ def main():
         dashboard.shutdown()
         for reader in readers.values():
             reader.join(timeout=2)
+        if repository:
+            repository.close()
         log("AEYE detenido.")
 
 

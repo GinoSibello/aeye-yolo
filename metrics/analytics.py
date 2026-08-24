@@ -16,15 +16,18 @@ class Analytics:
         return self.repository.query("""SELECT strftime('%H:00',sampled_at) hour,
           ROUND(100.0*SUM(status='missing')/COUNT(*),1) missing_percent,
           ROUND(AVG(people_count),2) avg_occupancy,COUNT(*) samples
-          FROM occupancy_samples WHERE zone=? AND sampled_at>=? AND sampled_at<?
+          FROM occupancy_samples WHERE data_status='valid' AND status!='unknown'
+          AND zone=? AND sampled_at>=? AND sampled_at<?
           GROUP BY strftime('%H',sampled_at) ORDER BY hour""", (zone,_time(start),_time(end)))
 
     def minutes_below_minimum(self, zone, start, end):
         """Estima minutos de faltantes usando el intervalo entre muestras."""
-        return self.repository.query("""WITH ordered AS (SELECT sampled_at,status,
-          LEAD(sampled_at,1,?) OVER(PARTITION BY camera_id ORDER BY sampled_at) next_at
+        return self.repository.query("""WITH ordered AS (SELECT sampled_at,status,data_status,
+          LEAD(sampled_at,1,?) OVER(PARTITION BY camera_id ORDER BY sampled_at) next_at,
+          LEAD(data_status,1,'valid') OVER(PARTITION BY camera_id ORDER BY sampled_at) next_data_status
           FROM occupancy_samples WHERE zone=? AND sampled_at>=? AND sampled_at<?)
-          SELECT ROUND(COALESCE(SUM(CASE WHEN status='missing' THEN
+          SELECT ROUND(COALESCE(SUM(CASE WHEN status='missing' AND data_status='valid'
+          AND next_data_status='valid' THEN
           (julianday(next_at)-julianday(sampled_at))*1440 ELSE 0 END),0),2) minutes FROM ordered""",
           (_time(end),zone,_time(start),_time(end)))[0]
 
@@ -63,5 +66,5 @@ class Analytics:
         return self.repository.query(f"""SELECT zone,strftime('%H:00',sampled_at) hour,
           ROUND(AVG(people_count),2) avg_occupancy,MIN(people_count) min_occupancy,
           MAX(people_count) max_occupancy,COUNT(*) samples FROM occupancy_samples
-          WHERE sampled_at>=? AND sampled_at<? {where} GROUP BY zone,strftime('%H',sampled_at)
+          WHERE data_status='valid' AND sampled_at>=? AND sampled_at<? {where} GROUP BY zone,strftime('%H',sampled_at)
           ORDER BY zone,hour""", tuple(params))

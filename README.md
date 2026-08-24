@@ -13,8 +13,9 @@ TensorRT.
 
 - Lectura concurrente de multiples camaras RTSP.
 - Deteccion de personas con un engine YOLO optimizado para TensorRT.
-- IDs temporales por camara mediante tracking por centroides.
+- IDs temporales por camara mediante ByteTrack.
 - Conteo de personas y reglas de dotacion minima/maxima por zona.
+- Conteo suavizado, histeresis y estado explicito `no_data`.
 - Alertas por consola o webhook despues de un tiempo configurable.
 - Captura JPEG del frame que origina cada alerta.
 - Dashboard web con estado y preview opcional.
@@ -33,9 +34,9 @@ CameraReader (un hilo por camara, conserva el frame mas reciente)
     v
 YOLO / TensorRT (detecta cajas de clase persona)
     |
-    +--> CentroidTracker (asigna IDs locales P001, P002...)
+    +--> ByteTrack (asigna IDs locales P001, P002...)
     |
-    +--> StaffingRule (compara conteo con minimo/maximo)
+    +--> StaffingStateMachine (suaviza, confirma y compara con minimo/maximo)
               |
               +--> SQLite: ocupacion e incidentes
               +--> logs/alerts.jsonl e imagen de evidencia
@@ -131,6 +132,21 @@ Variables de entorno admitidas:
 | `CAMERA_PASSWORD_FILE` | `/run/secrets/camera_password` |
 | `CAMERA_PASSWORD` | Alternativa de desarrollo si no existe el archivo |
 
+Controles de estabilidad en `system`:
+
+| Campo | Funcion |
+| --- | --- |
+| `confidence` | Umbral minimo entregado a ByteTrack; permite detecciones de baja confianza |
+| `smoothing_window_seconds` | Ventana usada para obtener la mediana del conteo |
+| `incident_confirmation_seconds` | Tiempo anormal continuo antes de abrir un incidente |
+| `recovery_confirmation_seconds` | Tiempo normal continuo antes de cerrar un incidente |
+| `alert_after_seconds` | Tiempo desde la confirmacion hasta enviar la alerta |
+| `tracker` | Umbrales, asociacion y tolerancia a oclusiones de ByteTrack |
+
+La configuracion de ejemplo acepta detecciones desde `0.1` para que ByteTrack
+pueda recuperar trayectorias debiles, pero exige `0.4` para crear una nueva.
+Estos valores deben calibrarse con imagenes reales de cada instalacion.
+
 ## Ejecucion
 
 ```bash
@@ -161,10 +177,21 @@ apagado.
 
 Para una zona configurada con `min_people: 1` y `max_people: 2`:
 
-- Un conteo de `0` abre un incidente `missing`.
-- Un conteo de `3` o mas abre un incidente `extra`.
-- Volver al rango cierra el incidente y calcula su duracion.
+- Un conteo suavizado de `0` sostenido durante el tiempo de confirmacion abre
+  un incidente `missing`.
+- Un conteo suavizado de `3` o mas sostenido abre un incidente `extra`.
+- Volver al rango durante el tiempo de recuperacion cierra el incidente.
 - Permanecer fuera del rango durante `alert_after_seconds` genera una alerta.
+
+Cada muestra conserva el conteo crudo y el suavizado. Si no hay frame valido o
+falla la inferencia, se guarda `data_status: no_data`, con conteos nulos y estado
+`unknown`. Ese intervalo no se interpreta como cero personas ni se suma a los
+minutos de faltantes.
+
+Cuando AEYE arranca, cierra los incidentes que quedaron abiertos en una ejecucion
+anterior usando la ultima muestra valida y el motivo `process_restart`. El tiempo
+apagado queda fuera del incidente. Si el problema continua, se confirma y abre
+un incidente nuevo.
 
 Las alertas se escriben en `logs/alerts.jsonl`. El frame asociado se guarda en
 `logs/alert_images/` y su ruta queda incluida en el evento. Con
@@ -264,7 +291,8 @@ run.sh               Arranque local con secreto montado
 
 ## Limites y uso responsable
 
-- El tracker actual usa centroides; puede cambiar IDs durante cruces u oclusiones.
+- ByteTrack mejora cruces y oclusiones, pero aun puede cambiar IDs en escenas
+  complejas y necesita calibracion por instalacion.
 - Los IDs son anonimos, locales por camara y se reinician con el proceso.
 - El conteo no distingue empleados, clientes o proveedores.
 - La aplicacion todavia no filtra regiones de interes dentro de una imagen.
@@ -294,3 +322,5 @@ reconocimiento facial.
 
 Antes de cada publicacion conviene ejecutar `git status` y revisar todos los
 archivos que se van a incluir.
+
+Ver [ROADMAP.md](ROADMAP.md) para el estado de mejoras completadas y pendientes.

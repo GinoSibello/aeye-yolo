@@ -14,8 +14,18 @@ class FakeTensor:
         return [[1.0, 2.0, 30.0, 40.0]]
 
 
+class FakeVectorTensor(FakeTensor):
+    def __init__(self, values):
+        self.values = values
+
+    def tolist(self):
+        return self.values
+
+
 class FakeBoxes:
     xyxy = FakeTensor()
+    conf = FakeVectorTensor([1.0])
+    cls = FakeVectorTensor([0.0])
 
     def __len__(self):
         return 1
@@ -53,8 +63,9 @@ class DetectorTest(unittest.TestCase):
 
     def test_detect_uses_fixed_tensorrt_input_shape(self):
         model = FakeModel()
-        boxes = self.detector.detect(model, object(), self.config())
-        self.assertEqual(boxes, [[1.0, 2.0, 30.0, 40.0]])
+        detections = self.detector.detect(model, object(), self.config())
+        self.assertEqual(detections[0].box, [1.0, 2.0, 30.0, 40.0])
+        self.assertEqual(detections[0].confidence, 1.0)
         self.assertFalse(model.kwargs["rect"])
         self.assertEqual(model.kwargs["classes"], [0])
 

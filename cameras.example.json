@@ -2,12 +2,23 @@
   "system": {
     "tensorrt_engine": "yolov8n.engine",
     "device": 0,
-    "confidence": 0.4,
+    "confidence": 0.1,
     "imgsz": 640,
     "inference_fps_per_camera": 2.0,
+    "smoothing_window_seconds": 10,
+    "incident_confirmation_seconds": 30,
+    "recovery_confirmation_seconds": 15,
     "alert_after_seconds": 900,
     "metrics_sample_every_seconds": 5,
-    "log_every_seconds": 10
+    "log_every_seconds": 10,
+    "tracker": {
+      "track_high_thresh": 0.4,
+      "track_low_thresh": 0.1,
+      "new_track_thresh": 0.4,
+      "track_buffer": 30,
+      "match_thresh": 0.8,
+      "fuse_score": true
+    }
   },
   "preview": {
     "enabled": false,

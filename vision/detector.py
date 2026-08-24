@@ -1,8 +1,18 @@
 """Carga y ejecuta el engine TensorRT usado para detectar personas."""
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from ultralytics import YOLO
+
+
+@dataclass(frozen=True)
+class Detection:
+    """Deteccion de persona con caja, confianza y clase para ByteTrack."""
+
+    box: list
+    confidence: float
+    class_id: int = 0
 
 
 def load_detector(system_cfg):
@@ -20,12 +30,18 @@ def load_detector(system_cfg):
     return YOLO(str(path))
 
 
-def _boxes_from_results(results):
-    """Convierte Results de Ultralytics al formato usado por el tracker."""
+def _detections_from_results(results):
+    """Convierte Results de Ultralytics al formato auditable usado por AEYE."""
     result = results[0]
     if result.boxes is None or not len(result.boxes):
         return []
-    return result.boxes.xyxy.cpu().tolist()
+    boxes = result.boxes.xyxy.cpu().tolist()
+    confidences = result.boxes.conf.cpu().tolist()
+    classes = result.boxes.cls.cpu().tolist()
+    return [
+        Detection(box=box, confidence=float(confidence), class_id=int(class_id))
+        for box, confidence, class_id in zip(boxes, confidences, classes)
+    ]
 
 
 def detect(model, frame, system_cfg):
@@ -39,4 +55,4 @@ def detect(model, frame, system_cfg):
         rect=False,
         verbose=False,
     )
-    return _boxes_from_results(results)
+    return _detections_from_results(results)

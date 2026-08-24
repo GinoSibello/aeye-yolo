@@ -1,13 +1,17 @@
-# AEYE — métricas y API
+# AEYE: metricas y API
 
-El motor de visión guarda una muestra de ocupación cada 5 segundos (configurable
-con `system.metrics_sample_every_seconds`) y abre/cierra incidentes cuando una
-zona sale o vuelve al rango esperado. La base SQLite predeterminada es
-`data/aeye.db`; puede cambiarse con `AEYE_DB_PATH`.
+El motor de vision guarda una muestra cada 5 segundos, configurable mediante
+`system.metrics_sample_every_seconds`. Los incidentes se abren o cierran solo
+despues de que la histeresis confirma que una zona salio o regreso al rango.
+La base SQLite predeterminada es `data/aeye.db`; puede cambiarse con
+`AEYE_DB_PATH`.
+
+Cada muestra distingue `data_status=valid` de `data_status=no_data` y conserva
+`raw_people_count` junto con el conteo suavizado `people_count`. Las consultas de
+dotacion excluyen periodos sin datos. Una desconexion nunca equivale a cero
+personas.
 
 ## Consultas disponibles
-
-La API responde las preguntas operativas en estos endpoints:
 
 - `GET /api/analytics/understaffed-hours?zone=Caja&start=...&end=...`
 - `GET /api/analytics/minutes-below-minimum?zone=Zona%20A&start=...&end=...`
@@ -26,18 +30,18 @@ Iniciar la API dentro del contenedor:
 uvicorn api.app:app --host 0.0.0.0 --port 8000
 ```
 
-La documentación interactiva queda en `http://IP_JETSON:8000/docs`.
+La documentacion interactiva queda en `http://IP_JETSON:8000/docs`.
 
-## Límites de interpretación
+## Limites de interpretacion
 
-El tiempo por empleado y las transiciones solo se generan después de integrar
-una evidencia explícita de identidad (badge, QR, ArUco, RFID, UWB o control de
-acceso). Un track visual no se considera una identidad.
+El tiempo por empleado y las transiciones solo se generan despues de integrar
+una evidencia explicita de identidad como badge, QR, RFID o control de acceso.
+Un track visual no se considera una identidad.
 
 La tasa de falsos positivos usa `detection_reviews`. Sin detecciones revisadas
-por una persona o una fuente de verdad externa, el endpoint devuelve una lista
-vacía; no inventa una tasa a partir de la confianza de YOLO.
+por una persona o una fuente externa, el endpoint devuelve una lista vacia.
 
-Los minutos bajo el mínimo se integran entre muestras consecutivas. Por ello,
-la precisión temporal depende de `metrics_sample_every_seconds` y de la
-continuidad de la cámara.
+Los minutos bajo el minimo se integran solamente entre muestras validas
+consecutivas. La precision depende de `metrics_sample_every_seconds` y de la
+continuidad de la camara. Un incidente abierto al reiniciar se cierra en su
+ultima muestra valida con `closure_reason=process_restart`.

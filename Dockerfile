@@ -6,6 +6,7 @@ RUN pip uninstall -y opencv-python opencv-python-headless ultralytics || true
 
 RUN pip install --no-cache-dir \
     ultralytics-opencv-headless \
+    "lap>=0.5.12" \
     fastapi \
     "uvicorn[standard]" \
     psutil
