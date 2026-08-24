@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Configuracion local y secretos
+cameras.json
+.env
+.env.*
+secrets/
+*password*
+
+# Datos operativos y evidencia
+data/
+logs/
+
+# Modelos y artefactos de inferencia
+*.pt
+*.onnx
+*.engine
+*.plan
+
+# Dataset descargado para benchmarks
+test_images/people/*
+!test_images/people/.gitkeep
+
+# Copias y archivos temporales
+README.txt
+*.orig
+*.rej
+*.bak
+*.tmp
+.DS_Store
+
+# IDE
+.idea/
+.vscode/

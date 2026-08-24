@@ -1,0 +1,59 @@
+{
+  "system": {
+    "inference_backend": "pytorch",
+    "model": "yolov8n.pt",
+    "tensorrt_engine": "yolov8n.engine",
+    "device": 0,
+    "confidence": 0.4,
+    "imgsz": 640,
+    "inference_fps_per_camera": 2.0,
+    "alert_after_seconds": 900,
+    "metrics_sample_every_seconds": 5,
+    "log_every_seconds": 10
+  },
+  "preview": {
+    "enabled": false,
+    "host": "0.0.0.0",
+    "port": 8080,
+    "jpeg_quality": 70,
+    "refresh_ms": 1000
+  },
+  "alerts": {
+    "mode": "console",
+    "webhook_url": ""
+  },
+  "database": {
+    "enabled": true,
+    "path": "/workspace/aeye-yolo/data/aeye.db"
+  },
+  "cameras": [
+    {
+      "id": "cam01",
+      "name": "Camara 01",
+      "zone": "Zona 01",
+      "enabled": true,
+      "ip": "192.0.2.11",
+      "port": 554,
+      "username": "admin",
+      "password_env": "CAMERA_PASSWORD",
+      "channel": 102,
+      "monitor_staffing": true,
+      "min_people": 1,
+      "max_people": 1
+    },
+    {
+      "id": "cam02",
+      "name": "Camara 02",
+      "zone": "Zona 02",
+      "enabled": false,
+      "ip": "192.0.2.12",
+      "port": 554,
+      "username": "admin",
+      "password_env": "CAMERA_PASSWORD",
+      "channel": 102,
+      "monitor_staffing": false,
+      "min_people": 0,
+      "max_people": 99
+    }
+  ]
+}
