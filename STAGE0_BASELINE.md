@@ -159,11 +159,8 @@ diagnosticar una fuga de memoria.
   esta medicion si la decodificacion HEVC uso hardware.
 - No hubo evidencia de inestabilidad RTSP o errores de detector/tracker.
 
-## Siguiente prueba unica
+## Continuacion
 
-Cambiar solamente `inference_fps_per_camera` de 2.0 a 4.0 y repetir exactamente
-el mismo baseline de 120 segundos. Se mantendran las ocho camaras, streams,
-preview, engine, potencia y tracker sin cambios. Esta prueba determinara cuanto
-margen real tiene el bucle secuencial y si los picos de CPU, no TensorRT, se
-convierten en el primer limite. No se aplica aun ninguna optimizacion
-arquitectonica.
+La prueba propuesta de frecuencia se completo para 2, 4, 6 y 8 FPS por camara.
+Los resultados y el limite recomendado estan en
+[STAGE1_FPS.md](STAGE1_FPS.md).

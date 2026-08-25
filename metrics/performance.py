@@ -64,6 +64,8 @@ class PerformanceMonitor:
             "analysis_attempts": 0,
             "analyzed_frames": 0,
             "unique_analyzed_frames": 0,
+            "first_analysis_at": None,
+            "last_analysis_at": None,
             "duplicate_analyses": 0,
             "scheduler_skipped_frames": 0,
             "no_data_cycles": 0,
@@ -85,6 +87,7 @@ class PerformanceMonitor:
         endpoint = self.ended_monotonic or time.monotonic()
 
         return max(endpoint - self.started_monotonic, 1e-9)
+
     def record_no_data(self, camera_id):
         """Cuenta un turno de inferencia sin frame valido."""
         row = self.rows[camera_id]
@@ -102,6 +105,10 @@ class PerformanceMonitor:
         row = self.rows[camera_id]
         row["analysis_attempts"] += 1
         row["analyzed_frames"] += 1
+        analyzed_at = time.monotonic()
+        if row["first_analysis_at"] is None:
+            row["first_analysis_at"] = analyzed_at
+        row["last_analysis_at"] = analyzed_at
 
         previous = row["last_sequence"]
         if previous is None or sequence != previous:
@@ -149,6 +156,24 @@ class PerformanceMonitor:
                 aggregate_timings[key].extend(values)
 
             not_analyzed = max(0, received - unique_analyzed)
+            active_analysis_seconds = None
+            analyzed_fps_active = None
+            unique_analyzed_fps_active = None
+            if (
+                row["first_analysis_at"] is not None
+                and row["last_analysis_at"] is not None
+            ):
+                active_analysis_seconds = max(
+                    row["last_analysis_at"] - row["first_analysis_at"], 0.0
+                )
+                if active_analysis_seconds > 0.0 and row["analyzed_frames"] > 1:
+                    unique_intervals = max(unique_analyzed - 1, 0)
+                    analyzed_fps_active = (
+                        (row["analyzed_frames"] - 1) / active_analysis_seconds
+                    )
+                    unique_analyzed_fps_active = (
+                        unique_intervals / active_analysis_seconds
+                    )
             cameras[camera_id] = {
                 "stream": reader["stream"],
                 "received_frames": received,
@@ -157,6 +182,18 @@ class PerformanceMonitor:
                 "analyzed_frames": row["analyzed_frames"],
                 "unique_analyzed_frames": unique_analyzed,
                 "analyzed_fps": round(row["analyzed_frames"] / duration, 3),
+                "analyzed_fps_active": (
+                    round(analyzed_fps_active, 3)
+                    if analyzed_fps_active is not None else None
+                ),
+                "unique_analyzed_fps_active": (
+                    round(unique_analyzed_fps_active, 3)
+                    if unique_analyzed_fps_active is not None else None
+                ),
+                "active_analysis_seconds": (
+                    round(active_analysis_seconds, 3)
+                    if active_analysis_seconds is not None else None
+                ),
                 "not_analyzed_frames_estimate": not_analyzed,
                 "scheduler_skipped_frames": row["scheduler_skipped_frames"],
                 "duplicate_analyses": row["duplicate_analyses"],

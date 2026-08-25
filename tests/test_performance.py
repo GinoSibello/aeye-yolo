@@ -42,6 +42,12 @@ class PerformanceTest(unittest.TestCase):
         self.assertEqual(camera["scheduler_skipped_frames"], 2)
         self.assertEqual(camera["duplicate_analyses"], 1)
         self.assertEqual(camera["not_analyzed_frames_estimate"], 8)
+        self.assertIsNotNone(camera["analyzed_fps_active"])
+        self.assertGreater(camera["analyzed_fps_active"], 0)
+        self.assertIsNotNone(camera["unique_analyzed_fps_active"])
+        self.assertLess(
+            camera["unique_analyzed_fps_active"], camera["analyzed_fps_active"]
+        )
         self.assertEqual(camera["reconnections"], 1)
         self.assertEqual(inference["p50"], 20.0)
         self.assertEqual(inference["p95"], 29.0)

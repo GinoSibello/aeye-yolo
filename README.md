@@ -263,6 +263,14 @@ predeterminado de 120 segundos con preview desactivado:
 tools/run_stage0_baseline.sh
 ```
 
+La comparacion controlada de 2, 4, 6 y 8 FPS por camara se documenta en
+[STAGE1_FPS.md](STAGE1_FPS.md). La serie completa utiliza configuraciones
+temporales y no modifica `cameras.json`:
+
+```bash
+tools/run_stage1_fps.sh 120
+```
+
 ## Pruebas
 
 Las pruebas unitarias no requieren camaras conectadas:

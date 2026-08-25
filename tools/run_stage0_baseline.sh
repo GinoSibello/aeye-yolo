@@ -7,8 +7,10 @@ cd "$PROJECT_DIR"
 DURATION_SECONDS="${1:-120}"
 IMAGE="${AEYE_IMAGE:-aeye-yolo:dev}"
 SECRET_FILE="${AEYE_CAMERA_PASSWORD_FILE:-/etc/aeye/camera_password}"
+CONFIG_FILE="${AEYE_CONFIG_FILE:-$PROJECT_DIR/cameras.json}"
+BENCHMARK_NAME="${AEYE_BENCHMARK_NAME:-stage0}"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
-OUTPUT_DIR="$PROJECT_DIR/benchmarks/stage0_$TIMESTAMP"
+OUTPUT_DIR="$PROJECT_DIR/benchmarks/${BENCHMARK_NAME}_$TIMESTAMP"
 CONTAINER_NAME="aeye-stage0-${TIMESTAMP}-$$"
 STATS_PID=""
 RUN_PID=""
@@ -18,14 +20,20 @@ if ! [[ "$DURATION_SECONDS" =~ ^[0-9]+$ ]] || (( DURATION_SECONDS < 10 )); then
   exit 2
 fi
 
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  printf 'No existe el archivo de configuracion %s.\n' "$CONFIG_FILE" >&2
+  exit 2
+fi
+CONFIG_FILE="$(realpath "$CONFIG_FILE")"
+
 python3 -c '
 import json
 import sys
-with open("cameras.json", encoding="utf-8") as stream:
+with open(sys.argv[1], encoding="utf-8") as stream:
     preview_enabled = bool(json.load(stream)["preview"].get("enabled", False))
 if preview_enabled:
-    sys.exit("El baseline exige preview.enabled=false en cameras.json")
-'
+    sys.exit("El baseline exige preview.enabled=false")
+' "$CONFIG_FILE"
 
 DOCKER=()
 if docker info >/dev/null 2>&1; then
@@ -92,11 +100,14 @@ for line in cv2.getBuildInformation().splitlines():
   --ulimit stack=67108864 \
   --mount \
     "type=bind,src=$SECRET_FILE,dst=/run/secrets/camera_password,readonly" \
+  --mount \
+    "type=bind,src=$CONFIG_FILE,dst=/run/aeye/cameras.json,readonly" \
   -v "$PROJECT_DIR:/workspace/aeye-yolo" \
   -w /workspace/aeye-yolo \
   -e "AEYE_LOG_DIR=$CONTAINER_OUTPUT/logs" \
   -e "AEYE_DB_PATH=$CONTAINER_OUTPUT/aeye.db" \
   -e "AEYE_PERFORMANCE_PATH=$CONTAINER_OUTPUT/performance_summary.json" \
+  -e "AEYE_CONFIG=/run/aeye/cameras.json" \
   "$IMAGE" >"$OUTPUT_DIR/aeye.log" 2>&1 &
 RUN_PID=$!
 
