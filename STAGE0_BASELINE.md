@@ -87,6 +87,8 @@ Cada corrida queda aislada en
 | `tegrastats.log` | Telemetria cruda cada 100 ms |
 | `tegrastats_summary.json` | GPU, CPU, RAM, temperatura y potencia |
 | `container_opencv.txt` | Version y soporte FFmpeg/GStreamer del contenedor |
+| `container_gstreamer.txt` | Version y plugins de captura disponibles |
+| `capture_device_evidence.txt` | Descriptores abiertos sobre el decoder NVDEC |
 | `host_runtime.txt` | Jetson Linux, arquitectura y modo de potencia |
 | `aeye.log` | Log de la ejecucion aislada |
 | `aeye.db` | SQLite separada de los datos operativos |

@@ -91,6 +91,21 @@ for line in cv2.getBuildInformation().splitlines():
         print(stripped)
 ' >"$OUTPUT_DIR/container_opencv.txt"
 
+"${DOCKER[@]}" run --rm --runtime=nvidia "$IMAGE" bash -lc '
+if ! command -v gst-inspect-1.0 >/dev/null 2>&1; then
+  echo "gstreamer=unavailable"
+  exit 0
+fi
+gst-launch-1.0 --version | sed -n "1,2p"
+for plugin in rtspsrc rtph265depay h265parse nvv4l2decoder nvvidconv appsink; do
+  if gst-inspect-1.0 "$plugin" >/dev/null 2>&1; then
+    printf "%s=available\n" "$plugin"
+  else
+    printf "%s=missing\n" "$plugin"
+  fi
+done
+' >"$OUTPUT_DIR/container_gstreamer.txt" 2>&1
+
 "${DOCKER[@]}" run --rm \
   --name "$CONTAINER_NAME" \
   --runtime=nvidia \
@@ -142,6 +157,19 @@ kill "$STATS_PID" >/dev/null 2>&1 || true
 wait "$STATS_PID" >/dev/null 2>&1 || true
 STATS_PID=""
 
+if ! "${DOCKER[@]}" exec "$CONTAINER_NAME" bash -lc '
+count=0
+for descriptor in /proc/1/fd/*; do
+  target="$(readlink "$descriptor" 2>/dev/null || true)"
+  case "$target" in
+    *v4l2-nvdec*) count=$((count + 1));;
+  esac
+done
+printf "nvdec_device=/dev/v4l2-nvdec\nopen_descriptors=%s\n" "$count"
+' >"$OUTPUT_DIR/capture_device_evidence.txt" 2>/dev/null; then
+  printf 'nvdec_device=unavailable\nopen_descriptors=unknown\n' \
+    >"$OUTPUT_DIR/capture_device_evidence.txt"
+fi
 "${DOCKER[@]}" kill --signal=INT "$CONTAINER_NAME" >/dev/null
 set +e
 wait "$RUN_PID"

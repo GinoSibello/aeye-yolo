@@ -15,6 +15,7 @@ from database.repository import Repository
 from metrics.performance import PerformanceMonitor
 from metrics.recorder import MetricsRecorder
 from metrics.staffing import StaffingStateMachine
+from vision.capture import open_capture, parse_capture_settings
 from vision.detector import detect, load_detector
 from vision.tracker import ByteTrackAdapter
 
@@ -58,10 +59,13 @@ def append_jsonl(filename, payload):
 class CameraReader(threading.Thread):
     """Lee RTSP continuamente y conserva solo el frame mas reciente."""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, capture_cfg=None):
         """Inicializa el lector con la configuracion de una sola camara."""
         super().__init__(daemon=True, name=f"reader-{cfg['id']}")
         self.cfg = cfg
+        self.capture_cfg = dict(capture_cfg or {})
+        self.capture_settings = parse_capture_settings(self.capture_cfg)
+        self.force_ffmpeg = False
         self.lock = threading.Lock()
         self.frame = None
         self.frame_seq = 0
@@ -80,6 +84,9 @@ class CameraReader(threading.Thread):
             "height": None,
             "reported_fps": None,
             "codec": None,
+            "capture_backend": None,
+            "hardware_decode": False,
+            "fallback_reason": None,
         }
 
     def build_url(self):
@@ -109,7 +116,7 @@ class CameraReader(threading.Thread):
         )
 
     def _close(self):
-        """Libera de forma segura la captura de OpenCV si esta abierta."""
+        """Libera de forma segura el backend de captura si esta abierto."""
         if self.cap is not None:
             self.cap.release()
             self.cap = None
@@ -121,33 +128,28 @@ class CameraReader(threading.Thread):
                 with self.lock:
                     self.connection_attempts += 1
                 url = self.build_url()
-                self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
-                if not self.cap.isOpened():
+                self.cap = open_capture(
+                    url, self.capture_cfg, force_ffmpeg=self.force_ffmpeg
+                )
+                if not self.cap.is_opened():
                     raise RuntimeError("No se pudo abrir RTSP")
-                width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or None
-                height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or None
-                reported_fps = float(self.cap.get(cv2.CAP_PROP_FPS)) or None
-                codec_value = int(self.cap.get(cv2.CAP_PROP_FOURCC))
-                codec = "".join(
-                    chr((codec_value >> (8 * index)) & 0xFF) for index in range(4)
-                ).strip("\x00") or None
+                stream = self.cap.stream_info()
                 with self.lock:
                     self.connected = True
                     self.last_error = ""
                     self.successful_connections += 1
-                    self.stream = {
-                        "width": width,
-                        "height": height,
-                        "reported_fps": round(reported_fps, 3) if reported_fps else None,
-                        "codec": codec,
-                    }
-                log(f"{self.cfg['id']} conectado a {self.cfg['ip']}")
+                    self.stream = stream
+                log(
+                    f"{self.cfg['id']} conectado a {self.cfg['ip']} "
+                    f"con captura={stream['capture_backend']}"
+                )
 
                 while not STOP_EVENT.is_set():
                     ok, frame = self.cap.read()
                     if not ok:
                         raise RuntimeError("Lectura RTSP fallida")
                     captured_at = time.monotonic()
+                    stream = self.cap.stream_info()
                     with self.lock:
                         self.frame = frame
                         self.frame_seq += 1
@@ -156,8 +158,15 @@ class CameraReader(threading.Thread):
                         if self.first_frame_at is None:
                             self.first_frame_at = captured_at
                         self.last_frame_at = captured_at
+                        self.stream = stream
 
             except Exception as e:
+                failed_backend = getattr(self.cap, "backend_name", None)
+                if (
+                    failed_backend == "gstreamer_nvdec"
+                    and self.capture_settings.fallback_to_ffmpeg
+                ):
+                    self.force_ffmpeg = True
                 with self.lock:
                     self.connected = False
                     self.last_error = str(e)
@@ -165,6 +174,8 @@ class CameraReader(threading.Thread):
                     self.frame_captured_at = None
                     self.connection_errors += 1
                 log(f"{self.cfg['id']} desconectado: {e}. Reintento en 3s")
+                if self.force_ffmpeg and failed_backend == "gstreamer_nvdec":
+                    log(f"{self.cfg['id']} activara fallback de captura FFmpeg")
                 self._close()
                 STOP_EVENT.wait(3)
 
@@ -385,6 +396,7 @@ def main():
     preview_cfg = cfg["preview"]
     alert_cfg = cfg["alerts"]
     database_cfg = cfg.get("database", {})
+    capture_cfg = system_cfg.get("capture", {})
     repository = None
     metrics_recorder = None
     if database_cfg.get("enabled", True):
@@ -418,6 +430,7 @@ def main():
         "requested_inference_fps_per_camera": float(
             system_cfg["inference_fps_per_camera"]
         ),
+        "requested_capture_backend": parse_capture_settings(capture_cfg).backend,
     }
 
     log("Cargando engine TensorRT...")
@@ -431,7 +444,7 @@ def main():
     last_log = {}
 
     for cam in cameras:
-        reader = CameraReader(cam)
+        reader = CameraReader(cam, capture_cfg)
         readers[cam["id"]] = reader
         trackers[cam["id"]] = ByteTrackAdapter(system_cfg.get("tracker", {}))
         rules[cam["id"]] = StaffingStateMachine(cam, system_cfg)
@@ -599,6 +612,7 @@ def main():
                     "analyzed_fps": perf_snapshot["analyzed_fps"],
                     "skipped_frames": perf_snapshot["scheduler_skipped_frames"],
                     "reconnections": max(0, reader_snapshot["successful_connections"] - 1),
+                    "capture_backend": reader_snapshot["stream"]["capture_backend"],
                     "inference_backend": "tensorrt",
                     "frame_seq": seq,
                     "last_update": now_iso(),

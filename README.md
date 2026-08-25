@@ -30,7 +30,7 @@ TensorRT.
 Camaras RTSP
     |
     v
-CameraReader (un hilo por camara, conserva el frame mas reciente)
+CameraReader (FFmpeg o GStreamer/NVDEC, conserva el frame mas reciente)
     |
     v
 YOLO / TensorRT (detecta cajas de clase persona)
@@ -57,6 +57,14 @@ Dashboard HTTP :8080              API analitica opcional :8000
 La ruta RTSP actual sigue el formato de camaras Hikvision:
 `/Streaming/Channels/<canal>`. Para otra marca se debe adaptar
 `CameraReader.build_url` en `main.py`.
+
+La captura usa OpenCV/FFmpeg cuando `system.capture` no esta configurado.
+Existe un backend experimental `gstreamer_nvdec` para H.264/H.265 y un
+fallback configurable a FFmpeg. La prueba de etapa 2 confirmo NVDEC real, pero
+no redujo CPU total con la conversion BGR actual; por eso FFmpeg sigue siendo
+el valor recomendado. La configuracion completa esta en
+`cameras.example.json` y los resultados en
+[STAGE2_NVDEC.md](STAGE2_NVDEC.md).
 
 ## Instalacion
 
@@ -269,6 +277,13 @@ temporales y no modifica `cameras.json`:
 
 ```bash
 tools/run_stage1_fps.sh 120
+```
+
+El prototipo GStreamer/NVDEC y su comparacion controlada con FFmpeg se
+documentan en [STAGE2_NVDEC.md](STAGE2_NVDEC.md):
+
+```bash
+tools/run_stage2_nvdec.sh 120
 ```
 
 ## Pruebas

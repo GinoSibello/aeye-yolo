@@ -5,6 +5,13 @@
     "confidence": 0.1,
     "imgsz": 640,
     "inference_fps_per_camera": 2.0,
+    "capture": {
+      "backend": "ffmpeg",
+      "fallback_to_ffmpeg": true,
+      "codec": "h265",
+      "rtsp_latency_ms": 200,
+      "read_timeout_ms": 15000
+    },
     "smoothing_window_seconds": 10,
     "incident_confirmation_seconds": 30,
     "recovery_confirmation_seconds": 15,

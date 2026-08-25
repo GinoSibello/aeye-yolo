@@ -119,9 +119,7 @@ aproximadamente 3.87 frames distintos por segundo.
 como frecuencia fiable con el scheduler secuencial y los streams actuales. La
 configuracion real queda en 2 FPS hasta que se decida explicitamente cambiarla.
 
-## Siguiente etapa
+## Continuacion
 
-La siguiente prueba aislada es un prototipo de decodificacion NVDEC con
-GStreamer y fallback configurable al lector FFmpeg actual. El resto del
-pipeline debe permanecer igual para comparar CPU, latencia y estabilidad antes
-de considerar batching.
+El prototipo NVDEC y su comparacion con FFmpeg se completaron. Los resultados
+estan en [STAGE2_NVDEC.md](STAGE2_NVDEC.md).
