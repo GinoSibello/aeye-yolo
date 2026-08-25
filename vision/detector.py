@@ -44,8 +44,8 @@ def _detections_from_results(results):
     ]
 
 
-def detect(model, frame, system_cfg):
-    """Ejecuta TensorRT con entrada fija y devuelve cajas de personas."""
+def detect(model, frame, system_cfg, with_timing=False):
+    """Ejecuta TensorRT y, opcionalmente, expone sus tiempos internos."""
     results = model.predict(
         frame,
         device=system_cfg["device"],
@@ -55,4 +55,14 @@ def detect(model, frame, system_cfg):
         rect=False,
         verbose=False,
     )
-    return _detections_from_results(results)
+    detections = _detections_from_results(results)
+    if not with_timing:
+        return detections
+
+    speed = getattr(results[0], "speed", None) or {}
+    timings = {
+        "preprocess_ms": speed.get("preprocess"),
+        "inference_ms": speed.get("inference"),
+        "postprocess_ms": speed.get("postprocess"),
+    }
+    return detections, timings

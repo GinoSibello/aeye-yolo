@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from database.repository import Repository
+from metrics.performance import PerformanceMonitor
 from metrics.recorder import MetricsRecorder
 from metrics.staffing import StaffingStateMachine
 from vision.detector import detect, load_detector
@@ -42,6 +43,11 @@ def log(msg):
     print(f"[{now_iso()}] {msg}", flush=True)
 
 
+def round_metric(value):
+    """Redondea una metrica opcional sin convertir ausencia de datos en cero."""
+    return round(float(value), 1) if isinstance(value, (int, float)) else None
+
+
 def append_jsonl(filename, payload):
     """Agrega un objeto JSON como una nueva linea dentro del directorio de logs."""
     path = LOG_DIR / filename
@@ -59,9 +65,22 @@ class CameraReader(threading.Thread):
         self.lock = threading.Lock()
         self.frame = None
         self.frame_seq = 0
+        self.frame_captured_at = None
         self.connected = False
         self.last_error = ""
         self.cap = None
+        self.received_frames = 0
+        self.first_frame_at = None
+        self.last_frame_at = None
+        self.connection_attempts = 0
+        self.successful_connections = 0
+        self.connection_errors = 0
+        self.stream = {
+            "width": None,
+            "height": None,
+            "reported_fps": None,
+            "codec": None,
+        }
 
     def build_url(self):
         """Construye la URL RTSP usando un archivo secreto o una variable."""
@@ -99,27 +118,52 @@ class CameraReader(threading.Thread):
         """Mantiene la conexion RTSP activa y reintenta luego de cada error."""
         while not STOP_EVENT.is_set():
             try:
+                with self.lock:
+                    self.connection_attempts += 1
                 url = self.build_url()
                 self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
                 if not self.cap.isOpened():
                     raise RuntimeError("No se pudo abrir RTSP")
-                self.connected = True
-                self.last_error = ""
+                width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or None
+                height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or None
+                reported_fps = float(self.cap.get(cv2.CAP_PROP_FPS)) or None
+                codec_value = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+                codec = "".join(
+                    chr((codec_value >> (8 * index)) & 0xFF) for index in range(4)
+                ).strip("\x00") or None
+                with self.lock:
+                    self.connected = True
+                    self.last_error = ""
+                    self.successful_connections += 1
+                    self.stream = {
+                        "width": width,
+                        "height": height,
+                        "reported_fps": round(reported_fps, 3) if reported_fps else None,
+                        "codec": codec,
+                    }
                 log(f"{self.cfg['id']} conectado a {self.cfg['ip']}")
 
                 while not STOP_EVENT.is_set():
                     ok, frame = self.cap.read()
                     if not ok:
                         raise RuntimeError("Lectura RTSP fallida")
+                    captured_at = time.monotonic()
                     with self.lock:
                         self.frame = frame
                         self.frame_seq += 1
+                        self.frame_captured_at = captured_at
+                        self.received_frames += 1
+                        if self.first_frame_at is None:
+                            self.first_frame_at = captured_at
+                        self.last_frame_at = captured_at
 
             except Exception as e:
-                self.connected = False
-                self.last_error = str(e)
                 with self.lock:
+                    self.connected = False
+                    self.last_error = str(e)
                     self.frame = None
+                    self.frame_captured_at = None
+                    self.connection_errors += 1
                 log(f"{self.cfg['id']} desconectado: {e}. Reintento en 3s")
                 self._close()
                 STOP_EVENT.wait(3)
@@ -127,11 +171,35 @@ class CameraReader(threading.Thread):
         self._close()
 
     def latest(self):
-        """Devuelve una copia del ultimo frame y su numero de secuencia."""
+        """Devuelve el ultimo frame, su secuencia y hora de decodificacion."""
         with self.lock:
             if self.frame is None:
-                return None, self.frame_seq
-            return self.frame.copy(), self.frame_seq
+                return None, self.frame_seq, None
+            return self.frame.copy(), self.frame_seq, self.frame_captured_at
+
+    def performance_snapshot(self):
+        """Expone contadores RTSP y propiedades del stream sin credenciales."""
+        with self.lock:
+            active_seconds = 0.0
+            if (
+                self.received_frames > 1
+                and self.first_frame_at is not None
+                and self.last_frame_at is not None
+            ):
+                active_seconds = max(
+                    self.last_frame_at - self.first_frame_at,
+                    1e-9,
+                )
+            return {
+                "received_frames": self.received_frames,
+                "received_fps_active": round(
+                    (self.received_frames - 1) / active_seconds, 3
+                ) if active_seconds else 0.0,
+                "connection_attempts": self.connection_attempts,
+                "successful_connections": self.successful_connections,
+                "connection_errors": self.connection_errors,
+                "stream": dict(self.stream),
+            }
 
 
 def save_alert_frame(frame, camera_id):
@@ -335,6 +403,22 @@ def main():
         raise RuntimeError("No hay camaras habilitadas en cameras.json")
 
     PREVIEW_ENABLED = bool(preview_cfg.get("enabled", False))
+    performance_path = Path(
+        os.environ.get(
+            "AEYE_PERFORMANCE_PATH",
+            str(LOG_DIR / "performance_summary.json"),
+        )
+    )
+    performance_configuration = {
+        "camera_count": len(cameras),
+        "camera_ids": [cam["id"] for cam in cameras],
+        "preview_enabled": PREVIEW_ENABLED,
+        "engine": Path(system_cfg["tensorrt_engine"]).name,
+        "imgsz": int(system_cfg["imgsz"]),
+        "requested_inference_fps_per_camera": float(
+            system_cfg["inference_fps_per_camera"]
+        ),
+    }
 
     log("Cargando engine TensorRT...")
     model = load_detector(system_cfg)
@@ -372,6 +456,7 @@ def main():
 
     dashboard = start_dashboard(preview_cfg["host"], int(preview_cfg["port"]))
     interval = 1.0 / float(system_cfg["inference_fps_per_camera"])
+    performance_monitor = PerformanceMonitor([cam["id"] for cam in cameras])
 
     log(f"AEYE iniciado con {len(cameras)} camara(s). Ctrl+C para detener.")
 
@@ -385,10 +470,17 @@ def main():
 
                 if loop_now < next_inference[cam_id]:
                     continue
+                scheduled_at = next_inference[cam_id]
+                schedule_lag_ms = (
+                    max(0.0, (loop_now - scheduled_at) * 1000.0)
+                    if scheduled_at > 0.0 else 0.0
+                )
                 next_inference[cam_id] = loop_now + interval
 
-                frame, seq = reader.latest()
+                frame, seq, captured_at = reader.latest()
+                process_started = time.monotonic()
                 if frame is None:
+                    performance_monitor.record_no_data(cam_id)
                     observation = rules[cam_id].no_data()
                     if metrics_recorder and cam.get("monitor_staffing", False):
                         metrics_recorder.observe(cam, observation)
@@ -404,11 +496,18 @@ def main():
                     continue
 
                 try:
-                    t0 = time.perf_counter()
-                    detections = detect(model, frame, system_cfg)
-                    infer_ms = (time.perf_counter() - t0) * 1000.0
+                    detector_started = time.perf_counter()
+                    detections, detector_timings = detect(
+                        model, frame, system_cfg, with_timing=True
+                    )
+                    detector_total_ms = (
+                        time.perf_counter() - detector_started
+                    ) * 1000.0
+                    tracker_started = time.perf_counter()
                     tracks = trackers[cam_id].update(detections, frame.shape)
+                    tracker_ms = (time.perf_counter() - tracker_started) * 1000.0
                 except Exception as error:
+                    performance_monitor.record_error(cam_id)
                     observation = rules[cam_id].no_data()
                     if metrics_recorder and cam.get("monitor_staffing", False):
                         metrics_recorder.observe(cam, observation)
@@ -432,6 +531,27 @@ def main():
                 observation = rules[cam_id].evaluate(raw_count)
                 count = observation.smoothed_count
                 rule_state = observation.rule_state
+                result_ready = time.monotonic()
+                timings = dict(detector_timings)
+                timings.update({
+                    "schedule_lag_ms": schedule_lag_ms,
+                    "frame_age_ms": (
+                        (process_started - captured_at) * 1000.0
+                        if captured_at is not None
+                        else None
+                    ),
+                    "detector_total_ms": detector_total_ms,
+                    "tracker_ms": tracker_ms,
+                    "capture_to_result_ms": (
+                        (result_ready - captured_at) * 1000.0
+                        if captured_at is not None
+                        else None
+                    ),
+                })
+                perf_snapshot = performance_monitor.record_analysis(
+                    cam_id, seq, timings
+                )
+                infer_ms = detector_timings.get("inference_ms")
                 if metrics_recorder and cam.get("monitor_staffing", False):
                     metrics_recorder.observe(cam, observation)
 
@@ -455,6 +575,7 @@ def main():
                 else:
                     remaining = observation.seconds_to_alert
 
+                reader_snapshot = reader.performance_snapshot()
                 state_row = {
                     "name": cam["name"],
                     "zone": cam.get("zone", ""),
@@ -467,7 +588,17 @@ def main():
                     "track_ids": [f"P{x:03d}" for x in ids],
                     "rule_state": rule_state,
                     "seconds_to_alert": round(remaining, 1) if isinstance(remaining, (int, float)) else None,
-                    "inference_ms": round(infer_ms, 1),
+                    "preprocess_ms": round_metric(timings["preprocess_ms"]),
+                    "inference_ms": round_metric(infer_ms),
+                    "postprocess_ms": round_metric(timings["postprocess_ms"]),
+                    "detector_total_ms": round_metric(detector_total_ms),
+                    "tracker_ms": round_metric(tracker_ms),
+                    "frame_age_ms": round_metric(timings["frame_age_ms"]),
+                    "capture_to_result_ms": round_metric(timings["capture_to_result_ms"]),
+                    "received_fps": reader_snapshot["received_fps_active"],
+                    "analyzed_fps": perf_snapshot["analyzed_fps"],
+                    "skipped_frames": perf_snapshot["scheduler_skipped_frames"],
+                    "reconnections": max(0, reader_snapshot["successful_connections"] - 1),
                     "inference_backend": "tensorrt",
                     "frame_seq": seq,
                     "last_update": now_iso(),
@@ -490,7 +621,7 @@ def main():
                     log(
                         f"{cam_id} personas={count} crudo={raw_count} "
                         f"IDs={[f'P{x:03d}' for x in ids]} "
-                        f"estado={rule_state} infer={infer_ms:.1f}ms"
+                        f"estado={rule_state} infer={round_metric(infer_ms)}ms"
                     )
                     last_log[cam_id] = loop_now
 
@@ -500,9 +631,17 @@ def main():
         log("Deteniendo por Ctrl+C...")
     finally:
         STOP_EVENT.set()
+        performance_monitor.stop()
         dashboard.shutdown()
         for reader in readers.values():
             reader.join(timeout=2)
+        try:
+            written_path = performance_monitor.write(
+                performance_path, readers, performance_configuration
+            )
+            log(f"Resumen de rendimiento: {written_path}")
+        except Exception as error:
+            log(f"ERROR escribiendo resumen de rendimiento: {error}")
         if repository:
             repository.close()
         log("AEYE detenido.")

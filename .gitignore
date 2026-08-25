@@ -18,6 +18,7 @@ secrets/
 # Datos operativos y evidencia
 data/
 logs/
+benchmarks/
 
 # Modelos y artefactos de inferencia
 *.pt

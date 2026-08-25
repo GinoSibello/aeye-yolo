@@ -38,7 +38,10 @@ class FakeModel:
 
     def predict(self, frame, **kwargs):
         self.kwargs = kwargs
-        return [types.SimpleNamespace(boxes=FakeBoxes())]
+        return [types.SimpleNamespace(
+            boxes=FakeBoxes(),
+            speed={"preprocess": 1.25, "inference": 8.5, "postprocess": 0.75},
+        )]
 
 
 class DetectorTest(unittest.TestCase):
@@ -68,6 +71,16 @@ class DetectorTest(unittest.TestCase):
         self.assertEqual(detections[0].confidence, 1.0)
         self.assertFalse(model.kwargs["rect"])
         self.assertEqual(model.kwargs["classes"], [0])
+
+    def test_detect_can_return_internal_stage_timings(self):
+        model = FakeModel()
+        detections, timings = self.detector.detect(
+            model, object(), self.config(), with_timing=True
+        )
+        self.assertEqual(len(detections), 1)
+        self.assertEqual(timings["preprocess_ms"], 1.25)
+        self.assertEqual(timings["inference_ms"], 8.5)
+        self.assertEqual(timings["postprocess_ms"], 0.75)
 
     def test_loader_selects_configured_file(self):
         with tempfile.TemporaryDirectory() as directory:

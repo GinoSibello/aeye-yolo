@@ -22,6 +22,7 @@ TensorRT.
 - Persistencia SQLite de muestras de ocupacion e incidentes.
 - API FastAPI para consultar metricas agregadas.
 - Herramienta para medir la latencia del engine TensorRT.
+- Baseline reproducible con latencias por etapa y telemetria de la Jetson.
 
 ## Arquitectura
 
@@ -128,6 +129,7 @@ Variables de entorno admitidas:
 | --- | --- |
 | `AEYE_CONFIG` | `/workspace/aeye-yolo/cameras.json` |
 | `AEYE_LOG_DIR` | `/workspace/aeye-yolo/logs` |
+| `AEYE_PERFORMANCE_PATH` | `<AEYE_LOG_DIR>/performance_summary.json` |
 | `AEYE_DB_PATH` | Valor de `database.path` |
 | `CAMERA_PASSWORD_FILE` | `/run/secrets/camera_password` |
 | `CAMERA_PASSWORD` | Alternativa de desarrollo si no existe el archivo |
@@ -250,6 +252,16 @@ runtime y copiarse al proyecto.
 
 Un `.engine` debe regenerarse si cambian la GPU, TensorRT, CUDA, JetPack, la
 imagen Docker o `imgsz`. Ver [TENSORRT.md](TENSORRT.md).
+
+## Diagnostico de rendimiento
+
+La metodologia, configuracion observada y limites de las metricas se documentan
+en [STAGE0_BASELINE.md](STAGE0_BASELINE.md). Para capturar el baseline
+predeterminado de 120 segundos con preview desactivado:
+
+```bash
+tools/run_stage0_baseline.sh
+```
 
 ## Pruebas
 
