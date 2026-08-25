@@ -4,7 +4,7 @@
     "device": 0,
     "confidence": 0.1,
     "imgsz": 640,
-    "inference_fps_per_camera": 2.0,
+    "inference_fps_per_camera": 6.0,
     "capture": {
       "backend": "ffmpeg",
       "fallback_to_ffmpeg": true,
