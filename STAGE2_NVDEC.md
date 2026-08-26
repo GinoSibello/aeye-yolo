@@ -8,10 +8,10 @@ reglas, el preview ni el modo de potencia.
 ## Estado
 
 El prototipo funciona con las ocho camaras, pero **no queda recomendado como
-backend predeterminado**. En la prueba A/B de 120 segundos NVDEC conecto mas
-rapido, pero aumento CPU media, RAM, consumo y latencia p95. La configuracion
-operativa no contiene una seccion `capture`, por lo que continua usando
-FFmpeg y 2 FPS por camara.
+backend predeterminado**. En la prueba A/B de 120 segundos a 6 FPS NVDEC
+conecto mas rapido, pero aumento CPU media, RAM, consumo y latencia p95. La
+configuracion operativa no contiene una seccion `capture`, por lo que continua
+usando FFmpeg, ahora a 6 FPS por camara.
 
 La imagen anterior se preservo localmente como `aeye-yolo:stage1`. La nueva
 imagen `aeye-yolo:dev` agrega GStreamer 1.24.2 y ocupa aproximadamente 145 MiB
@@ -86,44 +86,46 @@ tools/run_stage2_nvdec.sh 120
 ```
 
 El runner genera dos configuraciones temporales desde `cameras.json`. Conserva
-los 2 FPS, las ocho camaras y todo el pipeline; cambia solamente
+los 6 FPS, las ocho camaras y todo el pipeline; cambia solamente
 `system.capture.backend`. El brazo NVDEC desactiva el fallback durante el
 benchmark y falla si alguna camara no confirma el backend esperado.
 
 Los datos definitivos quedaron excluidos de Git:
 
-- `benchmarks/stage2_ffmpeg_20260825_192247/`
-- `benchmarks/stage2_gstreamer_nvdec_20260825_192500/`
-- `benchmarks/stage2_20260825_192247/stage2_summary.json`
+- `benchmarks/stage2_ffmpeg_20260825_201852/`
+- `benchmarks/stage2_gstreamer_nvdec_20260825_202105/`
+- `benchmarks/stage2_20260825_201852/stage2_summary.json`
 
 ## Resultado funcional
 
 | Metrica | OpenCV/FFmpeg | GStreamer/NVDEC | Diferencia |
 | --- | ---: | ---: | ---: |
-| FPS recibidos activos por camara | 8.163 | 8.005 | -0.158 |
-| FPS unicos analizados por camara | 1.991 | 1.993 | +0.002 |
-| FPS analizados, ventana completa | 13.550 | 15.256 | +1.706 |
-| Ciclos `no_data` de arranque | 236 | 27 | -209 |
-| Duplicados | 0 | 1 | +1 |
+| FPS recibidos activos por camara | 8.161 | 8.005 | -0.156 |
+| FPS analizados activos por camara | 5.910 | 5.913 | +0.003 |
+| FPS unicos analizados por camara | 5.848 | 5.734 | -0.114 |
+| FPS analizados, ventana completa | 40.311 | 45.290 | +4.979 |
+| Ciclos `no_data` de arranque | 677 | 75 | -602 |
+| Duplicados | 52 | 167 | +115 |
 | Errores de captura/proceso | 0 | 0 | 0 |
 | Reconexiones | 0 | 0 | 0 |
 
 NVDEC completo las conexiones iniciales antes y por eso produjo mas resultados
-en la ventana total. Una vez activas, ambas rutas entregaron la misma frecuencia
-de analisis solicitada.
+en la ventana total. Una vez activas, ambas rutas se acercaron a los 6 FPS de
+analisis solicitados, aunque la frecuencia de frames distintos quedo entre
+5.734 y 5.848 FPS. NVDEC repitio mas frames que FFmpeg.
 
 ## Latencia
 
 | Metrica | OpenCV/FFmpeg | GStreamer/NVDEC | Cambio NVDEC |
 | --- | ---: | ---: | ---: |
-| Scheduler p95 | 4.854 ms | 4.830 ms | -0.024 ms |
-| Antiguedad de frame p50 | 65.348 ms | 63.139 ms | -2.209 ms |
-| Antiguedad de frame p95 | 132.911 ms | 141.676 ms | +8.765 ms |
-| Captura a resultado p50 | 84.251 ms | 81.387 ms | -2.864 ms |
-| Captura a resultado p95 | 153.265 ms | 161.874 ms | +8.609 ms |
-| TensorRT p95 | 6.317 ms | 6.607 ms | +0.290 ms |
+| Scheduler p95 | 4.864 ms | 4.853 ms | -0.011 ms |
+| Antiguedad de frame p50 | 63.926 ms | 64.898 ms | +0.972 ms |
+| Antiguedad de frame p95 | 132.212 ms | 144.830 ms | +12.618 ms |
+| Captura a resultado p50 | 80.769 ms | 81.755 ms | +0.986 ms |
+| Captura a resultado p95 | 150.457 ms | 163.412 ms | +12.955 ms |
+| TensorRT p95 | 6.241 ms | 6.359 ms | +0.118 ms |
 
-NVDEC mejoro levemente la mediana, pero empeoro la cola p95. La latencia medida
+NVDEC empeoro levemente la mediana y tambien la cola p95. La latencia medida
 empieza cuando el lector entrega un frame decodificado; no incluye exposicion,
 red ni tiempo interno del decoder.
 
@@ -131,14 +133,14 @@ red ni tiempo interno del decoder.
 
 | Metrica | OpenCV/FFmpeg | GStreamer/NVDEC | Cambio NVDEC |
 | --- | ---: | ---: | ---: |
-| CPU media | 17.680% | 18.894% | +1.214 puntos (+6.9%) |
-| CPU p95 | 37.167% | 38.833% | +1.666 puntos |
-| Nucleo mas ocupado p95 | 90.0% | 89.2% | -0.8 puntos |
-| GPU media | 8.430% | 10.032% | +1.602 puntos |
-| RAM media | 4843 MB | 4978 MB | +135 MB |
-| RAM maxima | 4898 MB | 5016 MB | +118 MB |
-| Temperatura maxima | 51.75 C | 52.16 C | +0.41 C |
-| Potencia media | 5.655 W | 5.870 W | +0.215 W (+3.8%) |
+| CPU media | 23.355% | 24.371% | +1.016 puntos (+4.4%) |
+| CPU p95 | 40.267% | 42.092% | +1.825 puntos |
+| Nucleo mas ocupado p95 | 90.0% | 88.0% | -2.0 puntos |
+| GPU media | 25.770% | 28.906% | +3.136 puntos |
+| RAM media | 4913 MB | 4990 MB | +77 MB |
+| RAM maxima | 4957 MB | 5014 MB | +57 MB |
+| Temperatura maxima | 52.38 C | 53.31 C | +0.93 C |
+| Potencia media | 6.693 W | 7.009 W | +0.315 W (+4.7%) |
 
 No hubo limite termico ni de potencia. Dos minutos no permiten demostrar
 estabilidad de memoria durante 24 a 72 horas.

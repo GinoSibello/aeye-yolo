@@ -10,7 +10,8 @@ desactivado, contenedor y modo de potencia de 15W.
 Las cuatro corridas de 120 segundos finalizaron correctamente el 25 de agosto
 de 2026. No se cambio `cameras.json`: el runner genero copias temporales,
 modifico el campo de FPS mediante un parser JSON y las monto en Docker como
-solo lectura. La configuracion operativa continua en 2 FPS por camara.
+solo lectura. Tras completar las pruebas, la configuracion operativa se cambio
+explicitamente a 6 FPS por camara.
 
 Los datos crudos quedaron aislados y excluidos de Git:
 
@@ -117,7 +118,8 @@ aproximadamente 3.87 frames distintos por segundo.
 
 8 FPS puede utilizarse como modo de mejor esfuerzo, pero no debe prometerse
 como frecuencia fiable con el scheduler secuencial y los streams actuales. La
-configuracion real queda en 2 FPS hasta que se decida explicitamente cambiarla.
+configuracion real se cambio posteriormente a 6 FPS y se volvio a validar en
+la comparacion de Etapa 2.
 
 ## Continuacion
 
