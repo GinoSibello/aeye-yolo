@@ -118,7 +118,7 @@ La configuracion se divide en cuatro secciones:
 
 | Seccion | Responsabilidad |
 | --- | --- |
-| `system` | Engine TensorRT, resolucion, confianza, frecuencia y batching |
+| `system` | Engine TensorRT, resolucion, frecuencia, batching y pipeline |
 | `preview` | Dashboard, puerto y calidad JPEG |
 | `alerts` | Salida por consola o webhook |
 | `database` | Activacion y ruta de SQLite |
@@ -156,6 +156,8 @@ Controles de estabilidad en `system`:
 | `recovery_confirmation_seconds` | Tiempo normal continuo antes de cerrar un incidente |
 | `alert_after_seconds` | Tiempo desde la confirmacion hasta enviar la alerta |
 | `tracker` | Umbrales, asociacion y tolerancia a oclusiones de ByteTrack |
+| `pipeline.copy_latest_frame` | Copia el snapshot o comparte el ultimo frame de solo lectura |
+| `pipeline.result_transfer` | Usa transferencias `split` o una matriz `packed` |
 
 La configuracion de ejemplo acepta detecciones desde `0.1` para que ByteTrack
 pueda recuperar trayectorias debiles, pero exige `0.4` para crear una nueva.
@@ -297,6 +299,13 @@ la ruta secuencial se documentan en [STAGE3_BATCHING.md](STAGE3_BATCHING.md):
 tools/run_stage3_batching.sh 120
 ```
 
+El perfil de copias CPU y transferencias GPU, junto con la comparacion A/B de
+las rutas optimizadas, se documenta en [STAGE4_PIPELINE.md](STAGE4_PIPELINE.md):
+
+```bash
+tools/run_stage4_pipeline.sh 120
+```
+
 ## Pruebas
 
 Las pruebas unitarias no requieren camaras conectadas:
@@ -328,7 +337,7 @@ database/            Repositorio SQLite, modelos y migraciones
 identity/            Enlace temporal con identidades externas verificables
 metrics/             Registro de ocupacion y consultas analiticas
 tools/               Benchmark y utilidades de Jetson
-vision/              Captura, batching, tracking y ejecucion TensorRT
+vision/              Captura, pipeline, batching, tracking y TensorRT
 main.py              Orquestacion RTSP, tracking, reglas y dashboard
 cameras.example.json Plantilla publica de configuracion
 Dockerfile           Entorno NVIDIA reproducible

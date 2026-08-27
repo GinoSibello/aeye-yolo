@@ -24,7 +24,16 @@ class FakeVectorTensor(FakeTensor):
         return self.values
 
 
+class FakeDataTensor(FakeTensor):
+    def __getitem__(self, key):
+        return self
+
+    def tolist(self):
+        return [[1.0, 2.0, 30.0, 40.0, 1.0, 0.0]]
+
+
 class FakeBoxes:
+    data = FakeDataTensor()
     xyxy = FakeTensor()
     conf = FakeVectorTensor([1.0])
     cls = FakeVectorTensor([0.0])
@@ -109,6 +118,16 @@ class DetectorTest(unittest.TestCase):
         self.assertEqual(timings["preprocess_ms"], 1.25)
         self.assertEqual(timings["inference_ms"], 8.5)
         self.assertEqual(timings["postprocess_ms"], 0.75)
+        self.assertGreaterEqual(timings["result_conversion_ms"], 0.0)
+
+    def test_packed_transfer_preserves_detection_values(self):
+        model = FakeModel()
+        config = self.config()
+        config["pipeline"] = {"result_transfer": "packed"}
+        detections = self.detector.detect(model, object(), config)
+        self.assertEqual(detections[0].box, [1.0, 2.0, 30.0, 40.0])
+        self.assertEqual(detections[0].confidence, 1.0)
+        self.assertEqual(detections[0].class_id, 0)
 
     def test_loader_selects_configured_file(self):
         with tempfile.TemporaryDirectory() as directory:

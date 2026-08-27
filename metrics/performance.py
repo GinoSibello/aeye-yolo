@@ -11,10 +11,12 @@ from pathlib import Path
 TIMING_KEYS = (
     "schedule_lag_ms",
     "batch_wait_ms",
+    "frame_snapshot_ms",
     "frame_age_ms",
     "preprocess_ms",
     "inference_ms",
     "postprocess_ms",
+    "result_conversion_ms",
     "detector_total_ms",
     "tracker_ms",
     "capture_to_result_ms",

@@ -2,10 +2,13 @@
 
 import json
 import struct
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from ultralytics import YOLO
+
+from vision.pipeline import parse_pipeline_settings
 
 
 @dataclass(frozen=True)
@@ -99,10 +102,16 @@ def load_detector(system_cfg):
     return YOLO(str(path))
 
 
-def _detections_from_result(result):
+def _detections_from_result(result, transfer_mode="split"):
     """Convierte un Result de Ultralytics al formato auditable de AEYE."""
     if result.boxes is None or not len(result.boxes):
         return []
+    if transfer_mode == "packed":
+        rows = result.boxes.data[:, :6].cpu().tolist()
+        return [
+            Detection(box=row[:4], confidence=float(row[4]), class_id=int(row[5]))
+            for row in rows
+        ]
     boxes = result.boxes.xyxy.cpu().tolist()
     confidences = result.boxes.conf.cpu().tolist()
     classes = result.boxes.cls.cpu().tolist()
@@ -140,10 +149,23 @@ def detect_batch(model, frames, system_cfg, with_timing=False):
         raise RuntimeError(
             f"TensorRT devolvio {len(results)} resultados para {len(frames)} frames"
         )
-    detections = [_detections_from_result(result) for result in results]
+    transfer_mode = parse_pipeline_settings(system_cfg).result_transfer
+    detections = []
+    conversion_times = []
+    for result in results:
+        conversion_started = time.perf_counter()
+        detections.append(_detections_from_result(result, transfer_mode))
+        conversion_times.append(
+            (time.perf_counter() - conversion_started) * 1000.0
+        )
     if not with_timing:
         return detections
-    return detections, [_timings_from_result(result) for result in results]
+    timings = []
+    for result, conversion_ms in zip(results, conversion_times):
+        row = _timings_from_result(result)
+        row["result_conversion_ms"] = conversion_ms
+        timings.append(row)
+    return detections, timings
 
 
 def detect(model, frame, system_cfg, with_timing=False):

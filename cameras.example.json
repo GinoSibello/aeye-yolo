@@ -17,6 +17,10 @@
       "max_batch_size": 8,
       "timeout_ms": 10
     },
+    "pipeline": {
+      "copy_latest_frame": false,
+      "result_transfer": "packed"
+    },
     "smoothing_window_seconds": 10,
     "incident_confirmation_seconds": 30,
     "recovery_confirmation_seconds": 15,

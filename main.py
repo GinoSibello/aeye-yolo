@@ -22,6 +22,7 @@ from vision.detector import (
     load_detector,
     validate_engine_for_batching,
 )
+from vision.pipeline import frame_snapshot, parse_pipeline_settings
 from vision.tracker import ByteTrackAdapter
 
 CONFIG_PATH = Path(os.environ.get("AEYE_CONFIG", "/workspace/aeye-yolo/cameras.json"))
@@ -64,12 +65,13 @@ def append_jsonl(filename, payload):
 class CameraReader(threading.Thread):
     """Lee RTSP continuamente y conserva solo el frame mas reciente."""
 
-    def __init__(self, cfg, capture_cfg=None):
+    def __init__(self, cfg, capture_cfg=None, pipeline_settings=None):
         """Inicializa el lector con la configuracion de una sola camara."""
         super().__init__(daemon=True, name=f"reader-{cfg['id']}")
         self.cfg = cfg
         self.capture_cfg = dict(capture_cfg or {})
         self.capture_settings = parse_capture_settings(self.capture_cfg)
+        self.pipeline_settings = pipeline_settings or parse_pipeline_settings({})
         self.force_ffmpeg = False
         self.lock = threading.Lock()
         self.frame = None
@@ -192,11 +194,17 @@ class CameraReader(threading.Thread):
             return self.frame is not None
 
     def latest(self):
-        """Devuelve el ultimo frame, su secuencia y hora de decodificacion."""
+        """Devuelve el ultimo frame, su secuencia y el costo del snapshot."""
+        snapshot_started = time.perf_counter()
         with self.lock:
-            if self.frame is None:
-                return None, self.frame_seq, None
-            return self.frame.copy(), self.frame_seq, self.frame_captured_at
+            frame = frame_snapshot(
+                self.frame,
+                self.pipeline_settings.copy_latest_frame,
+            )
+            sequence = self.frame_seq
+            captured_at = self.frame_captured_at
+        snapshot_ms = (time.perf_counter() - snapshot_started) * 1000.0
+        return frame, sequence, captured_at, snapshot_ms
 
     def performance_snapshot(self):
         """Expone contadores RTSP y propiedades del stream sin credenciales."""
@@ -408,6 +416,7 @@ def main():
     database_cfg = cfg.get("database", {})
     capture_cfg = system_cfg.get("capture", {})
     batching_settings = parse_batching_settings(system_cfg)
+    pipeline_settings = parse_pipeline_settings(system_cfg)
     repository = None
     metrics_recorder = None
     if database_cfg.get("enabled", True):
@@ -445,6 +454,8 @@ def main():
         "batching_enabled": batching_settings.enabled,
         "batching_max_batch_size": batching_settings.max_batch_size,
         "batching_timeout_ms": batching_settings.timeout_ms,
+        "copy_latest_frame": pipeline_settings.copy_latest_frame,
+        "result_transfer": pipeline_settings.result_transfer,
     }
 
     engine_capabilities = validate_engine_for_batching(
@@ -469,7 +480,7 @@ def main():
     last_log = {}
 
     for cam in cameras:
-        reader = CameraReader(cam, capture_cfg)
+        reader = CameraReader(cam, capture_cfg, pipeline_settings)
         readers[cam["id"]] = reader
         trackers[cam["id"]] = ByteTrackAdapter(system_cfg.get("tracker", {}))
         rules[cam["id"]] = StaffingStateMachine(cam, system_cfg)
@@ -577,7 +588,7 @@ def main():
             batch_items = []
             for cam_id in selected_ids:
                 reader = readers[cam_id]
-                frame, seq, captured_at = reader.latest()
+                frame, seq, captured_at, snapshot_ms = reader.latest()
                 if frame is None:
                     mark_no_data(cam_id)
                     continue
@@ -599,6 +610,7 @@ def main():
                     "seq": seq,
                     "captured_at": captured_at,
                     "process_started": time.monotonic(),
+                    "frame_snapshot_ms": snapshot_ms,
                     "schedule_lag_ms": schedule_lags[cam_id],
                 })
 
@@ -655,6 +667,7 @@ def main():
                 timings.update({
                     "schedule_lag_ms": item["schedule_lag_ms"],
                     "batch_wait_ms": batch_wait_ms,
+                    "frame_snapshot_ms": item["frame_snapshot_ms"],
                     "frame_age_ms": (
                         (item["process_started"] - captured_at) * 1000.0
                         if captured_at is not None

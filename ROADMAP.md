@@ -20,6 +20,9 @@ en la Jetson.
 - [x] **Batching TensorRT entre camaras.** Engine FP16 dinamico batch 8,
   timeout corto, frames recientes, orden por camara y trackers independientes.
   Queda disponible pero deshabilitado segun la medicion de Etapa 3.
+- [x] **Copias y conversiones del pipeline.** Snapshot compartido entre captura e
+  inferencia y una sola transferencia GPU-CPU por resultado, con rutas A/B,
+  metricas propias y decision documentada en la Etapa 4.
 - [x] **Cierre de SQLite.** El repositorio libera su conexion y las pruebas pueden
   eliminar correctamente las bases temporales en Windows.
 
