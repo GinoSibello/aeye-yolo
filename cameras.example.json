@@ -12,6 +12,11 @@
       "rtsp_latency_ms": 200,
       "read_timeout_ms": 15000
     },
+    "batching": {
+      "enabled": false,
+      "max_batch_size": 8,
+      "timeout_ms": 10
+    },
     "smoothing_window_seconds": 10,
     "incident_confirmation_seconds": 30,
     "recovery_confirmation_seconds": 15,

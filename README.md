@@ -13,6 +13,7 @@ TensorRT.
 
 - Lectura concurrente de multiples camaras RTSP.
 - Deteccion de personas con un engine YOLO optimizado para TensorRT.
+- Batching configurable entre camaras con timeout y validacion del engine.
 - IDs temporales por camara mediante ByteTrack.
 - Conteo de personas y reglas de dotacion minima/maxima por zona.
 - Conteo suavizado, histeresis y estado explicito `no_data`.
@@ -31,6 +32,9 @@ Camaras RTSP
     |
     v
 CameraReader (FFmpeg o GStreamer/NVDEC, conserva el frame mas reciente)
+    |
+    v
+BatchScheduler (batch 1 o lote dinamico con timeout corto)
     |
     v
 YOLO / TensorRT (detecta cajas de clase persona)
@@ -114,7 +118,7 @@ La configuracion se divide en cuatro secciones:
 
 | Seccion | Responsabilidad |
 | --- | --- |
-| `system` | Engine TensorRT, resolucion, confianza y frecuencias |
+| `system` | Engine TensorRT, resolucion, confianza, frecuencia y batching |
 | `preview` | Dashboard, puerto y calidad JPEG |
 | `alerts` | Salida por consola o webhook |
 | `database` | Activacion y ruta de SQLite |
@@ -254,9 +258,9 @@ TensorRT es el unico backend de produccion. `cameras.json` indica el archivo:
 AEYE tuvo anteriormente un backend PyTorch que se utilizo como referencia para
 comparar rendimiento. Las pruebas en la Jetson mostraron una mejora suficiente
 con TensorRT y ese camino fue retirado para reducir configuracion y mantenimiento.
-La aplicacion ya no carga archivos `.pt`, no permite seleccionar otro backend y
-no incluye la herramienta de exportacion. El engine debe prepararse fuera del
-runtime y copiarse al proyecto.
+El runtime no carga archivos `.pt` ni permite seleccionar otro backend. La
+herramienta `tools/export_batch_engine.sh` exporta en un contenedor temporal,
+separado del arranque de produccion, y copia el engine validado al proyecto.
 
 Un `.engine` debe regenerarse si cambian la GPU, TensorRT, CUDA, JetPack, la
 imagen Docker o `imgsz`. Ver [TENSORRT.md](TENSORRT.md).
@@ -284,6 +288,13 @@ documentan en [STAGE2_NVDEC.md](STAGE2_NVDEC.md):
 
 ```bash
 tools/run_stage2_nvdec.sh 120
+```
+
+El batching entre camaras, el engine dinamico batch 8 y la comparacion contra
+la ruta secuencial se documentan en [STAGE3_BATCHING.md](STAGE3_BATCHING.md):
+
+```bash
+tools/run_stage3_batching.sh 120
 ```
 
 ## Pruebas
@@ -317,7 +328,7 @@ database/            Repositorio SQLite, modelos y migraciones
 identity/            Enlace temporal con identidades externas verificables
 metrics/             Registro de ocupacion y consultas analiticas
 tools/               Benchmark y utilidades de Jetson
-vision/              Carga y ejecucion del engine TensorRT
+vision/              Captura, batching, tracking y ejecucion TensorRT
 main.py              Orquestacion RTSP, tracking, reglas y dashboard
 cameras.example.json Plantilla publica de configuracion
 Dockerfile           Entorno NVIDIA reproducible

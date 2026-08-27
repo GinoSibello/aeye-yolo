@@ -1,5 +1,7 @@
 """Carga y ejecuta el engine TensorRT usado para detectar personas."""
 
+import json
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +15,73 @@ class Detection:
     box: list
     confidence: float
     class_id: int = 0
+
+
+@dataclass(frozen=True)
+class EngineCapabilities:
+    """Capacidades declaradas dentro del engine exportado por Ultralytics."""
+
+    batch_size: int
+    dynamic: bool
+    imgsz: tuple
+    precision: str
+
+
+def read_engine_capabilities(path):
+    """Lee la metadata prefijada sin deserializar TensorRT ni usar la GPU."""
+    engine_path = Path(path)
+    with engine_path.open("rb") as stream:
+        length_raw = stream.read(4)
+        if len(length_raw) != 4:
+            raise ValueError(f"Engine TensorRT sin metadata valida: {engine_path}")
+        metadata_length = struct.unpack("<I", length_raw)[0]
+        if metadata_length < 2 or metadata_length > 1_000_000:
+            raise ValueError(f"Metadata TensorRT fuera de rango: {engine_path}")
+        metadata_raw = stream.read(metadata_length)
+    try:
+        metadata = json.loads(metadata_raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"Metadata TensorRT ilegible: {engine_path}") from error
+
+    args = metadata.get("args", {})
+    imgsz = metadata.get("imgsz", [])
+    if isinstance(imgsz, int):
+        imgsz = (imgsz, imgsz)
+    else:
+        imgsz = tuple(int(value) for value in imgsz)
+    batch_size = int(metadata.get("batch", args.get("batch", 1)))
+    quantize = args.get("quantize")
+    precision = {8: "int8", 16: "fp16", 32: "fp32"}.get(quantize, "unknown")
+    return EngineCapabilities(
+        batch_size=batch_size,
+        dynamic=bool(args.get("dynamic", False)),
+        imgsz=imgsz,
+        precision=precision,
+    )
+
+
+def validate_engine_for_batching(system_cfg, batching_settings):
+    """Impide iniciar batching con un perfil fijo o demasiado pequeno."""
+    path = Path(system_cfg.get("tensorrt_engine", "yolov8n.engine"))
+    capabilities = read_engine_capabilities(path)
+    expected_imgsz = int(system_cfg.get("imgsz", 0))
+    if expected_imgsz and capabilities.imgsz != (expected_imgsz, expected_imgsz):
+        raise ValueError(
+            "El engine TensorRT usa imgsz="
+            f"{capabilities.imgsz}, pero se solicito {expected_imgsz}"
+        )
+    if batching_settings.enabled:
+        if not capabilities.dynamic:
+            raise ValueError(
+                "Batching requiere un engine TensorRT con dynamic=true"
+            )
+        if capabilities.batch_size < batching_settings.max_batch_size:
+            raise ValueError(
+                "El engine TensorRT admite batch maximo "
+                f"{capabilities.batch_size}, pero se solicito "
+                f"{batching_settings.max_batch_size}"
+            )
+    return capabilities
 
 
 def load_detector(system_cfg):
@@ -30,9 +99,8 @@ def load_detector(system_cfg):
     return YOLO(str(path))
 
 
-def _detections_from_results(results):
-    """Convierte Results de Ultralytics al formato auditable usado por AEYE."""
-    result = results[0]
+def _detections_from_result(result):
+    """Convierte un Result de Ultralytics al formato auditable de AEYE."""
     if result.boxes is None or not len(result.boxes):
         return []
     boxes = result.boxes.xyxy.cpu().tolist()
@@ -44,25 +112,44 @@ def _detections_from_results(results):
     ]
 
 
-def detect(model, frame, system_cfg, with_timing=False):
-    """Ejecuta TensorRT y, opcionalmente, expone sus tiempos internos."""
+def _timings_from_result(result):
+    """Extrae tiempos por imagen reportados por Ultralytics."""
+    speed = getattr(result, "speed", None) or {}
+    return {
+        "preprocess_ms": speed.get("preprocess"),
+        "inference_ms": speed.get("inference"),
+        "postprocess_ms": speed.get("postprocess"),
+    }
+
+
+def detect_batch(model, frames, system_cfg, with_timing=False):
+    """Ejecuta un lote y conserva alineacion uno a uno con sus entradas."""
+    if not frames:
+        return ([], []) if with_timing else []
     results = model.predict(
-        frame,
+        list(frames),
         device=system_cfg["device"],
         classes=[0],
         conf=float(system_cfg["confidence"]),
         imgsz=int(system_cfg["imgsz"]),
         rect=False,
+        batch=len(frames),
         verbose=False,
     )
-    detections = _detections_from_results(results)
+    if len(results) != len(frames):
+        raise RuntimeError(
+            f"TensorRT devolvio {len(results)} resultados para {len(frames)} frames"
+        )
+    detections = [_detections_from_result(result) for result in results]
     if not with_timing:
         return detections
+    return detections, [_timings_from_result(result) for result in results]
 
-    speed = getattr(results[0], "speed", None) or {}
-    timings = {
-        "preprocess_ms": speed.get("preprocess"),
-        "inference_ms": speed.get("inference"),
-        "postprocess_ms": speed.get("postprocess"),
-    }
-    return detections, timings
+
+def detect(model, frame, system_cfg, with_timing=False):
+    """Conserva la API individual usando internamente la ruta por lotes."""
+    output = detect_batch(model, [frame], system_cfg, with_timing=with_timing)
+    if not with_timing:
+        return output[0]
+    detections, timings = output
+    return detections[0], timings[0]

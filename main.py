@@ -15,8 +15,13 @@ from database.repository import Repository
 from metrics.performance import PerformanceMonitor
 from metrics.recorder import MetricsRecorder
 from metrics.staffing import StaffingStateMachine
+from vision.batching import BatchScheduler, parse_batching_settings
 from vision.capture import open_capture, parse_capture_settings
-from vision.detector import detect, load_detector
+from vision.detector import (
+    detect_batch,
+    load_detector,
+    validate_engine_for_batching,
+)
 from vision.tracker import ByteTrackAdapter
 
 CONFIG_PATH = Path(os.environ.get("AEYE_CONFIG", "/workspace/aeye-yolo/cameras.json"))
@@ -180,6 +185,11 @@ class CameraReader(threading.Thread):
                 STOP_EVENT.wait(3)
 
         self._close()
+
+    def has_frame(self):
+        """Permite al batcher esperar disponibilidad sin copiar la imagen."""
+        with self.lock:
+            return self.frame is not None
 
     def latest(self):
         """Devuelve el ultimo frame, su secuencia y hora de decodificacion."""
@@ -397,6 +407,7 @@ def main():
     alert_cfg = cfg["alerts"]
     database_cfg = cfg.get("database", {})
     capture_cfg = system_cfg.get("capture", {})
+    batching_settings = parse_batching_settings(system_cfg)
     repository = None
     metrics_recorder = None
     if database_cfg.get("enabled", True):
@@ -431,16 +442,30 @@ def main():
             system_cfg["inference_fps_per_camera"]
         ),
         "requested_capture_backend": parse_capture_settings(capture_cfg).backend,
+        "batching_enabled": batching_settings.enabled,
+        "batching_max_batch_size": batching_settings.max_batch_size,
+        "batching_timeout_ms": batching_settings.timeout_ms,
     }
 
+    engine_capabilities = validate_engine_for_batching(
+        system_cfg, batching_settings
+    )
+    performance_configuration.update({
+        "engine_batch_size": engine_capabilities.batch_size,
+        "engine_dynamic": engine_capabilities.dynamic,
+        "engine_precision": engine_capabilities.precision,
+    })
     log("Cargando engine TensorRT...")
     model = load_detector(system_cfg)
-    log("Backend activo: tensorrt")
+    log(
+        "Backend activo: tensorrt "
+        f"batching={batching_settings.enabled} "
+        f"batch_max={batching_settings.max_batch_size}"
+    )
 
     readers = {}
     trackers = {}
     rules = {}
-    next_inference = {}
     last_log = {}
 
     for cam in cameras:
@@ -448,7 +473,6 @@ def main():
         readers[cam["id"]] = reader
         trackers[cam["id"]] = ByteTrackAdapter(system_cfg.get("tracker", {}))
         rules[cam["id"]] = StaffingStateMachine(cam, system_cfg)
-        next_inference[cam["id"]] = 0.0
         last_log[cam["id"]] = 0.0
         with STATE_LOCK:
             STATE[cam["id"]] = {
@@ -468,74 +492,156 @@ def main():
         reader.start()
 
     dashboard = start_dashboard(preview_cfg["host"], int(preview_cfg["port"]))
-    interval = 1.0 / float(system_cfg["inference_fps_per_camera"])
+    scheduler = BatchScheduler(
+        [cam["id"] for cam in cameras],
+        float(system_cfg["inference_fps_per_camera"]),
+        batching_settings,
+    )
     performance_monitor = PerformanceMonitor([cam["id"] for cam in cameras])
 
     log(f"AEYE iniciado con {len(cameras)} camara(s). Ctrl+C para detener.")
 
+    camera_by_id = {cam["id"]: cam for cam in cameras}
+    last_dispatched_sequence = {cam["id"]: None for cam in cameras}
+
+    def mark_no_data(cam_id, error=None):
+        """Propaga ausencia o fallo sin convertirlo en un conteo cero."""
+        cam = camera_by_id[cam_id]
+        reader = readers[cam_id]
+        if error is None:
+            performance_monitor.record_no_data(cam_id)
+            last_error = reader.last_error
+        else:
+            performance_monitor.record_error(cam_id)
+            last_error = f"Inferencia/tracking: {error}"
+        observation = rules[cam_id].no_data()
+        if metrics_recorder and cam.get("monitor_staffing", False):
+            metrics_recorder.observe(cam, observation)
+        with STATE_LOCK:
+            STATE[cam_id].update({
+                "connected": reader.connected,
+                "data_status": "no_data",
+                "people": None,
+                "raw_people": None,
+                "track_ids": [],
+                "rule_state": "no_data",
+                "last_update": now_iso(),
+                "last_error": last_error,
+            })
+        if error is not None:
+            log(f"{cam_id} error de inferencia/tracking: {error}")
+
     try:
         while not STOP_EVENT.is_set():
-            loop_now = time.monotonic()
+            window_started = time.monotonic()
+            due_ids = scheduler.due(window_started)
+            if not due_ids:
+                STOP_EVENT.wait(scheduler.idle_sleep_seconds(window_started))
+                continue
 
-            for cam in cameras:
-                cam_id = cam["id"]
+            deadline = scheduler.window_deadline(window_started)
+            while batching_settings.enabled and not STOP_EVENT.is_set():
+                now = time.monotonic()
+                due_ids = scheduler.due(now)
+                ready_count = sum(readers[cam_id].has_frame() for cam_id in due_ids)
+                if ready_count >= batching_settings.max_batch_size or now >= deadline:
+                    break
+                wait_seconds = scheduler.wait_seconds(now, deadline)
+                if wait_seconds <= 0.0:
+                    break
+                STOP_EVENT.wait(wait_seconds)
+
+            dispatch_at = time.monotonic()
+            due_ids = scheduler.due(dispatch_at)
+            ready_ids = [
+                cam_id for cam_id in due_ids if readers[cam_id].has_frame()
+            ]
+            selected_ids = ready_ids[:batching_settings.max_batch_size]
+            no_data_ids = [
+                cam_id for cam_id in due_ids if not readers[cam_id].has_frame()
+            ]
+            scheduled_ids = selected_ids + no_data_ids
+            if not scheduled_ids:
+                STOP_EVENT.wait(scheduler.idle_sleep_seconds(dispatch_at))
+                continue
+
+            schedule_lags = scheduler.schedule(scheduled_ids, dispatch_at)
+            batch_wait_ms = (
+                (dispatch_at - window_started) * 1000.0
+                if batching_settings.enabled
+                else 0.0
+            )
+            for cam_id in no_data_ids:
+                mark_no_data(cam_id)
+
+            batch_items = []
+            for cam_id in selected_ids:
                 reader = readers[cam_id]
-
-                if loop_now < next_inference[cam_id]:
-                    continue
-                scheduled_at = next_inference[cam_id]
-                schedule_lag_ms = (
-                    max(0.0, (loop_now - scheduled_at) * 1000.0)
-                    if scheduled_at > 0.0 else 0.0
-                )
-                next_inference[cam_id] = loop_now + interval
-
                 frame, seq, captured_at = reader.latest()
-                process_started = time.monotonic()
                 if frame is None:
-                    performance_monitor.record_no_data(cam_id)
-                    observation = rules[cam_id].no_data()
-                    if metrics_recorder and cam.get("monitor_staffing", False):
-                        metrics_recorder.observe(cam, observation)
-                    with STATE_LOCK:
-                        STATE[cam_id]["connected"] = reader.connected
-                        STATE[cam_id]["data_status"] = "no_data"
-                        STATE[cam_id]["people"] = None
-                        STATE[cam_id]["raw_people"] = None
-                        STATE[cam_id]["track_ids"] = []
-                        STATE[cam_id]["rule_state"] = "no_data"
-                        STATE[cam_id]["last_update"] = now_iso()
-                        STATE[cam_id]["last_error"] = reader.last_error
+                    mark_no_data(cam_id)
                     continue
-
-                try:
-                    detector_started = time.perf_counter()
-                    detections, detector_timings = detect(
-                        model, frame, system_cfg, with_timing=True
+                previous_seq = last_dispatched_sequence[cam_id]
+                if previous_seq is not None and seq < previous_seq:
+                    mark_no_data(
+                        cam_id,
+                        RuntimeError(
+                            f"secuencia fuera de orden: {seq} < {previous_seq}"
+                        ),
                     )
-                    detector_total_ms = (
-                        time.perf_counter() - detector_started
-                    ) * 1000.0
+                    continue
+                last_dispatched_sequence[cam_id] = seq
+                batch_items.append({
+                    "cam": camera_by_id[cam_id],
+                    "cam_id": cam_id,
+                    "reader": reader,
+                    "frame": frame,
+                    "seq": seq,
+                    "captured_at": captured_at,
+                    "process_started": time.monotonic(),
+                    "schedule_lag_ms": schedule_lags[cam_id],
+                })
+
+            if not batch_items:
+                continue
+
+            detector_started = time.perf_counter()
+            try:
+                detections_by_frame, timings_by_frame = detect_batch(
+                    model,
+                    [item["frame"] for item in batch_items],
+                    system_cfg,
+                    with_timing=True,
+                )
+                detector_total_ms = (
+                    time.perf_counter() - detector_started
+                ) * 1000.0
+                performance_monitor.record_batch(
+                    len(batch_items), batch_wait_ms, detector_total_ms
+                )
+            except Exception as error:
+                for item in batch_items:
+                    mark_no_data(item["cam_id"], error)
+                continue
+
+            batch_size = len(batch_items)
+            for item, detections, detector_timings in zip(
+                batch_items, detections_by_frame, timings_by_frame
+            ):
+                cam = item["cam"]
+                cam_id = item["cam_id"]
+                reader = item["reader"]
+                frame = item["frame"]
+                seq = item["seq"]
+                captured_at = item["captured_at"]
+                try:
                     tracker_started = time.perf_counter()
                     tracks = trackers[cam_id].update(detections, frame.shape)
-                    tracker_ms = (time.perf_counter() - tracker_started) * 1000.0
+                    tracker_ms = (
+                        time.perf_counter() - tracker_started
+                    ) * 1000.0
                 except Exception as error:
-                    performance_monitor.record_error(cam_id)
-                    observation = rules[cam_id].no_data()
-                    if metrics_recorder and cam.get("monitor_staffing", False):
-                        metrics_recorder.observe(cam, observation)
-                    with STATE_LOCK:
-                        STATE[cam_id].update({
-                            "connected": reader.connected,
-                            "data_status": "no_data",
-                            "people": None,
-                            "raw_people": None,
-                            "track_ids": [],
-                            "rule_state": "no_data",
-                            "last_update": now_iso(),
-                            "last_error": f"Inferencia/tracking: {error}",
-                        })
-                    log(f"{cam_id} error de inferencia/tracking: {error}")
+                    mark_no_data(cam_id, error)
                     continue
 
                 boxes = [track.box for track in tracks]
@@ -547,9 +653,10 @@ def main():
                 result_ready = time.monotonic()
                 timings = dict(detector_timings)
                 timings.update({
-                    "schedule_lag_ms": schedule_lag_ms,
+                    "schedule_lag_ms": item["schedule_lag_ms"],
+                    "batch_wait_ms": batch_wait_ms,
                     "frame_age_ms": (
-                        (process_started - captured_at) * 1000.0
+                        (item["process_started"] - captured_at) * 1000.0
                         if captured_at is not None
                         else None
                     ),
@@ -574,14 +681,13 @@ def main():
                     if metrics_recorder:
                         metrics_recorder.mark_alerted(cam_id)
                     try:
-                        alert_frame = frame.copy()
-                        alert_image_path = save_alert_frame(alert_frame, cam_id)
+                        alert_image_path = save_alert_frame(frame.copy(), cam_id)
                         detail["image_path"] = alert_image_path
                         log(f"{cam_id} frame de alerta guardado en {alert_image_path}")
-                    except Exception as e:
+                    except Exception as error:
                         detail["image_path"] = None
-                        detail["image_error"] = str(e)
-                        log(f"{cam_id} ERROR guardando frame de alerta: {e}")
+                        detail["image_error"] = str(error)
+                        log(f"{cam_id} ERROR guardando frame de alerta: {error}")
 
                     send_alert(alert_cfg, detail)
                     remaining = 0
@@ -600,19 +706,31 @@ def main():
                     "detections": len(detections),
                     "track_ids": [f"P{x:03d}" for x in ids],
                     "rule_state": rule_state,
-                    "seconds_to_alert": round(remaining, 1) if isinstance(remaining, (int, float)) else None,
+                    "seconds_to_alert": (
+                        round(remaining, 1)
+                        if isinstance(remaining, (int, float))
+                        else None
+                    ),
                     "preprocess_ms": round_metric(timings["preprocess_ms"]),
                     "inference_ms": round_metric(infer_ms),
                     "postprocess_ms": round_metric(timings["postprocess_ms"]),
                     "detector_total_ms": round_metric(detector_total_ms),
                     "tracker_ms": round_metric(tracker_ms),
+                    "batch_size": batch_size,
+                    "batch_wait_ms": round_metric(batch_wait_ms),
                     "frame_age_ms": round_metric(timings["frame_age_ms"]),
-                    "capture_to_result_ms": round_metric(timings["capture_to_result_ms"]),
+                    "capture_to_result_ms": round_metric(
+                        timings["capture_to_result_ms"]
+                    ),
                     "received_fps": reader_snapshot["received_fps_active"],
                     "analyzed_fps": perf_snapshot["analyzed_fps"],
                     "skipped_frames": perf_snapshot["scheduler_skipped_frames"],
-                    "reconnections": max(0, reader_snapshot["successful_connections"] - 1),
-                    "capture_backend": reader_snapshot["stream"]["capture_backend"],
+                    "reconnections": max(
+                        0, reader_snapshot["successful_connections"] - 1
+                    ),
+                    "capture_backend": reader_snapshot["stream"][
+                        "capture_backend"
+                    ],
                     "inference_backend": "tensorrt",
                     "frame_seq": seq,
                     "last_update": now_iso(),
@@ -622,24 +740,37 @@ def main():
                     STATE[cam_id] = state_row
 
                 if PREVIEW_ENABLED:
-                    annotated = draw_overlay(frame.copy(), cam, boxes, ids, count, rule_state, remaining)
+                    annotated = draw_overlay(
+                        frame.copy(),
+                        cam,
+                        boxes,
+                        ids,
+                        count,
+                        rule_state,
+                        remaining,
+                    )
                     ok, buf = cv2.imencode(
-                        ".jpg", annotated,
-                        [int(cv2.IMWRITE_JPEG_QUALITY), int(preview_cfg.get("jpeg_quality", 70))]
+                        ".jpg",
+                        annotated,
+                        [
+                            int(cv2.IMWRITE_JPEG_QUALITY),
+                            int(preview_cfg.get("jpeg_quality", 70)),
+                        ],
                     )
                     if ok:
                         with STATE_LOCK:
                             LATEST_JPEG[cam_id] = buf.tobytes()
 
-                if loop_now - last_log[cam_id] >= float(system_cfg.get("log_every_seconds", 10)):
+                if result_ready - last_log[cam_id] >= float(
+                    system_cfg.get("log_every_seconds", 10)
+                ):
                     log(
                         f"{cam_id} personas={count} crudo={raw_count} "
                         f"IDs={[f'P{x:03d}' for x in ids]} "
-                        f"estado={rule_state} infer={round_metric(infer_ms)}ms"
+                        f"estado={rule_state} infer={round_metric(infer_ms)}ms "
+                        f"batch={batch_size}"
                     )
-                    last_log[cam_id] = loop_now
-
-            time.sleep(0.005)
+                    last_log[cam_id] = result_ready
 
     except KeyboardInterrupt:
         log("Deteniendo por Ctrl+C...")

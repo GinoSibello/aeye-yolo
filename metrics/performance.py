@@ -10,6 +10,7 @@ from pathlib import Path
 
 TIMING_KEYS = (
     "schedule_lag_ms",
+    "batch_wait_ms",
     "frame_age_ms",
     "preprocess_ms",
     "inference_ms",
@@ -55,6 +56,9 @@ class PerformanceMonitor:
         self.max_timing_samples = max(1000, int(max_timing_samples))
         self.ended_monotonic = None
         self.ended_at = None
+        self.batch_sizes = deque(maxlen=self.max_timing_samples)
+        self.batch_wait_ms = deque(maxlen=self.max_timing_samples)
+        self.batch_detector_ms = deque(maxlen=self.max_timing_samples)
         self.rows = {}
         for camera_id in camera_ids:
             self.rows[camera_id] = self._new_row()
@@ -99,6 +103,14 @@ class PerformanceMonitor:
         row = self.rows[camera_id]
         row["analysis_attempts"] += 1
         row["processing_errors"] += 1
+
+    def record_batch(self, batch_size, wait_ms, detector_ms):
+        """Registra una llamada TensorRT y cuantos frames proceso en conjunto."""
+        if int(batch_size) < 1:
+            raise ValueError("batch_size debe ser al menos 1")
+        self.batch_sizes.append(int(batch_size))
+        self.batch_wait_ms.append(float(wait_ms))
+        self.batch_detector_ms.append(float(detector_ms))
 
     def record_analysis(self, camera_id, sequence, timings):
         """Registra un resultado valido y devuelve estadisticas acumuladas breves."""
@@ -224,6 +236,21 @@ class PerformanceMonitor:
         aggregate["timings_ms"] = {
             key: _timing_summary(values) for key, values in aggregate_timings.items()
         }
+        batch_calls = len(self.batch_sizes)
+        batch_items = sum(self.batch_sizes)
+        requested_max = max(1, int(configuration.get("batching_max_batch_size", 1)))
+        batching = {
+            "inference_calls": batch_calls,
+            "processed_frames": batch_items,
+            "calls_per_second": round(batch_calls / duration, 3),
+            "frames_per_second": round(batch_items / duration, 3),
+            "fill_percent": round(
+                100.0 * batch_items / (batch_calls * requested_max), 3
+            ) if batch_calls else None,
+            "batch_size": _timing_summary(self.batch_sizes),
+            "wait_ms": _timing_summary(self.batch_wait_ms),
+            "detector_call_ms": _timing_summary(self.batch_detector_ms),
+        }
         return {
             "schema_version": 1,
             "started_at": self.started_at.isoformat(timespec="seconds"),
@@ -231,9 +258,10 @@ class PerformanceMonitor:
             "duration_seconds": round(duration, 3),
             "configuration": configuration,
             "aggregate": aggregate,
+            "batching": batching,
             "cameras": cameras,
             "latency_scope": (
-                "capture_to_result_ms begins when OpenCV returns a decoded frame; "
+                "capture_to_result_ms begins when the capture backend returns a decoded frame; "
                 "it excludes camera exposure, network transit and decoder time"
             ),
         }

@@ -52,6 +52,23 @@ class PerformanceTest(unittest.TestCase):
         self.assertEqual(inference["p50"], 20.0)
         self.assertEqual(inference["p95"], 29.0)
 
+    def test_summary_reports_batch_throughput_fill_and_wait(self):
+        monitor = PerformanceMonitor(["cam_test"])
+        monitor.record_batch(8, 0.5, 48.0)
+        monitor.record_batch(4, 10.0, 30.0)
+
+        summary = monitor.summary(
+            {"cam_test": FakeReader()},
+            {"batching_max_batch_size": 8},
+        )
+        batching = summary["batching"]
+        self.assertEqual(batching["inference_calls"], 2)
+        self.assertEqual(batching["processed_frames"], 12)
+        self.assertEqual(batching["fill_percent"], 75.0)
+        self.assertEqual(batching["batch_size"]["avg"], 6.0)
+        self.assertEqual(batching["wait_ms"]["p50"], 5.25)
+        self.assertEqual(batching["detector_call_ms"]["p95"], 47.1)
+
     def test_r39_tegrastats_format_preserves_reported_power_peak(self):
         line = (
             "RAM 3703/7485MB (lfb 30x4MB) "

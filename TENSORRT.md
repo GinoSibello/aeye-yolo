@@ -43,6 +43,36 @@ regenerarlo cuando cambia alguno de estos elementos:
 - resolucion `imgsz`;
 - arquitectura o version del modelo YOLO.
 
+## Engine para batching
+
+El engine `yolov8n.engine` original es FP16 fijo con batch 1. Etapa 3 genero y
+valido `yolov8n_batch8.engine`, FP16 dinamico con maximo batch 8 y forma optima
+`(8, 3, 640, 640)`. Se puede regenerar en la Jetson con:
+
+```bash
+tools/export_batch_engine.sh yolov8n.pt yolov8n_batch8.engine 8 640
+```
+
+El script usa la imagen Docker en un contenedor temporal, instala ahi las
+dependencias de exportacion, compila el engine y deserializa su perfil para
+validarlo. Los pesos y engines permanecen excluidos de Git.
+
+Para probarlo:
+
+```json
+"tensorrt_engine": "yolov8n_batch8.engine",
+"batching": {
+  "enabled": true,
+  "max_batch_size": 8,
+  "timeout_ms": 10
+}
+```
+
+AEYE rechaza al arrancar engines con otra resolucion, batch insuficiente o forma
+fija cuando batching esta habilitado. La prueba de ocho camaras a 6 FPS redujo
+la inferencia por imagen, pero aumento la latencia p95; por eso batch 1 sigue
+siendo el valor operativo recomendado. Ver [STAGE3_BATCHING.md](STAGE3_BATCHING.md).
+
 ## Ejecutar
 
 El arranque normal no requiere seleccionar backend:
@@ -55,7 +85,7 @@ La terminal debe mostrar:
 
 ```text
 Cargando engine TensorRT...
-Backend activo: tensorrt
+Backend activo: tensorrt batching=False batch_max=1
 ```
 
 `/state.json` incluye `inference_backend: "tensorrt"` e `inference_ms`.

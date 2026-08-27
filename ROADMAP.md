@@ -17,6 +17,9 @@ en la Jetson.
 - [x] **7. ByteTrack.** Reemplaza el tracker por centroides. Cada camara mantiene
   su propio estado e IDs locales; TensorRT entrega caja y confianza al tracker.
 - [x] **Backend unico TensorRT.** No existe seleccion ni fallback a PyTorch.
+- [x] **Batching TensorRT entre camaras.** Engine FP16 dinamico batch 8,
+  timeout corto, frames recientes, orden por camara y trackers independientes.
+  Queda disponible pero deshabilitado segun la medicion de Etapa 3.
 - [x] **Cierre de SQLite.** El repositorio libera su conexion y las pruebas pueden
   eliminar correctamente las bases temporales en Windows.
 
