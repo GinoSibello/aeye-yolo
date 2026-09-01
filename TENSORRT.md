@@ -73,6 +73,27 @@ fija cuando batching esta habilitado. La prueba de ocho camaras a 6 FPS redujo
 la inferencia por imagen, pero aumento la latencia p95; por eso batch 1 sigue
 siendo el valor operativo recomendado. Ver [STAGE3_BATCHING.md](STAGE3_BATCHING.md).
 
+## Modelos de Etapa 5
+
+La matriz FP16 comparo YOLO11n, YOLO11s, YOLO26n y YOLO26s con engines fijos
+batch 1 en 640x640 y 960x544. AEYE admite una forma cuadrada como entero y una
+forma rectangular como lista `[alto, ancho]`:
+
+```json
+"tensorrt_engine": "models/stage5/yolo26s_fp16_640x640.engine",
+"imgsz": 640
+```
+
+Para un engine 960x544 se usa `"imgsz": [544, 960]`. El ganador preliminar es
+YOLO26s FP16 640: obtuvo mAP50-95 de persona 0,5936 sobre COCO val, MAE de
+conteo 0,910 y sostuvo las ocho camaras sin errores. La configuracion activa no
+se cambia hasta validarlo con imagenes anotadas de las camaras AEYE. Ver
+[STAGE5_MODELS.md](STAGE5_MODELS.md).
+
+INT8 no debe exportarse todavia. Primero hay que establecer el baseline FP16,
+calibrar con imagenes representativas separadas y verificar la perdida de
+precision, recall, conteo e incidentes.
+
 ## Ejecutar
 
 El arranque normal no requiere seleccionar backend:

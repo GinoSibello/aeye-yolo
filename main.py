@@ -20,6 +20,7 @@ from vision.capture import open_capture, parse_capture_settings
 from vision.detector import (
     detect_batch,
     load_detector,
+    normalize_image_size,
     validate_engine_for_batching,
 )
 from vision.pipeline import frame_snapshot, parse_pipeline_settings
@@ -446,7 +447,7 @@ def main():
         "camera_ids": [cam["id"] for cam in cameras],
         "preview_enabled": PREVIEW_ENABLED,
         "engine": Path(system_cfg["tensorrt_engine"]).name,
-        "imgsz": int(system_cfg["imgsz"]),
+        "imgsz": list(normalize_image_size(system_cfg["imgsz"])),
         "requested_inference_fps_per_camera": float(
             system_cfg["inference_fps_per_camera"]
         ),

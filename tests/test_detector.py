@@ -79,10 +79,10 @@ class DetectorTest(unittest.TestCase):
     def config(self):
         return {"device": 0, "confidence": 0.4, "imgsz": 640}
 
-    def write_engine(self, path, batch=8, dynamic=True):
+    def write_engine(self, path, batch=8, dynamic=True, imgsz=(640, 640)):
         metadata = json.dumps({
             "batch": batch,
-            "imgsz": [640, 640],
+            "imgsz": list(imgsz),
             "args": {
                 "batch": batch,
                 "dynamic": dynamic,
@@ -151,11 +151,30 @@ class DetectorTest(unittest.TestCase):
             )
             self.assertEqual(validated, capabilities)
 
+    def test_normalizes_square_and_rectangular_image_sizes(self):
+        self.assertEqual(self.detector.normalize_image_size(640), (640, 640))
+        self.assertEqual(
+            self.detector.normalize_image_size([544, 960]),
+            (544, 960),
+        )
+        with self.assertRaises(ValueError):
+            self.detector.normalize_image_size([640])
+
+    def test_validates_rectangular_engine_image_size(self):
+        with tempfile.TemporaryDirectory() as directory:
+            engine = Path(directory) / "rectangular.engine"
+            self.write_engine(engine, imgsz=(544, 960))
+            capabilities = self.detector.validate_engine_for_batching(
+                {"tensorrt_engine": str(engine), "imgsz": [544, 960]},
+                types.SimpleNamespace(enabled=False, max_batch_size=1),
+            )
+            self.assertEqual(capabilities.imgsz, (544, 960))
+
     def test_rejects_engine_with_different_image_size(self):
         with tempfile.TemporaryDirectory() as directory:
             engine = Path(directory) / "batch.engine"
             self.write_engine(engine)
-            with self.assertRaisesRegex(ValueError, "se solicito 320"):
+            with self.assertRaisesRegex(ValueError, r"se solicito \(320, 320\)"):
                 self.detector.validate_engine_for_batching(
                     {"tensorrt_engine": str(engine), "imgsz": 320},
                     types.SimpleNamespace(enabled=False, max_batch_size=1),

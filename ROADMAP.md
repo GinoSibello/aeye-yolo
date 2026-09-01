@@ -23,6 +23,9 @@ en la Jetson.
 - [x] **Copias y conversiones del pipeline.** Snapshot compartido entre captura e
   inferencia y una sola transferencia GPU-CPU por resultado, con rutas A/B,
   metricas propias y decision documentada en la Etapa 4.
+- [x] **Comparacion de modelos FP16.** YOLO11/YOLO26 nano y small en 640 y
+  960x544, precision sobre 5.000 imagenes anotadas y prueba de ocho camaras.
+  YOLO26s 640 queda como ganador preliminar; INT8 espera datos AEYE anotados.
 - [x] **Cierre de SQLite.** El repositorio libera su conexion y las pruebas pueden
   eliminar correctamente las bases temporales en Windows.
 

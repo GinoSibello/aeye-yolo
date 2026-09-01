@@ -306,6 +306,16 @@ las rutas optimizadas, se documenta en [STAGE4_PIPELINE.md](STAGE4_PIPELINE.md):
 tools/run_stage4_pipeline.sh 120
 ```
 
+La comparacion FP16 de YOLO11/YOLO26, nano/small y 640/960x544, incluyendo
+precision sobre COCO anotado y validacion con ocho camaras, se documenta en
+[STAGE5_MODELS.md](STAGE5_MODELS.md):
+
+```bash
+tools/prepare_coco_val.sh
+tools/run_stage5_accuracy.sh
+tools/run_stage5_operational.sh 120
+```
+
 ## Pruebas
 
 Las pruebas unitarias no requieren camaras conectadas:

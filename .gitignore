@@ -19,6 +19,7 @@ secrets/
 data/
 logs/
 benchmarks/
+datasets/
 
 # Modelos y artefactos de inferencia
 *.pt

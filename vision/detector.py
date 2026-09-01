@@ -30,6 +30,21 @@ class EngineCapabilities:
     precision: str
 
 
+def normalize_image_size(value):
+    """Normaliza `imgsz` a `(alto, ancho)` para entradas fijas TensorRT."""
+    if isinstance(value, bool):
+        raise ValueError("imgsz debe ser un entero o una lista [alto, ancho]")
+    if isinstance(value, int):
+        dimensions = (value, value)
+    elif isinstance(value, (list, tuple)) and len(value) == 2:
+        dimensions = tuple(int(dimension) for dimension in value)
+    else:
+        raise ValueError("imgsz debe ser un entero o una lista [alto, ancho]")
+    if any(dimension <= 0 for dimension in dimensions):
+        raise ValueError("Las dimensiones de imgsz deben ser positivas")
+    return dimensions
+
+
 def read_engine_capabilities(path):
     """Lee la metadata prefijada sin deserializar TensorRT ni usar la GPU."""
     engine_path = Path(path)
@@ -47,11 +62,7 @@ def read_engine_capabilities(path):
         raise ValueError(f"Metadata TensorRT ilegible: {engine_path}") from error
 
     args = metadata.get("args", {})
-    imgsz = metadata.get("imgsz", [])
-    if isinstance(imgsz, int):
-        imgsz = (imgsz, imgsz)
-    else:
-        imgsz = tuple(int(value) for value in imgsz)
+    imgsz = normalize_image_size(metadata.get("imgsz", []))
     batch_size = int(metadata.get("batch", args.get("batch", 1)))
     quantize = args.get("quantize")
     precision = {8: "int8", 16: "fp16", 32: "fp32"}.get(quantize, "unknown")
@@ -67,8 +78,8 @@ def validate_engine_for_batching(system_cfg, batching_settings):
     """Impide iniciar batching con un perfil fijo o demasiado pequeno."""
     path = Path(system_cfg.get("tensorrt_engine", "yolov8n.engine"))
     capabilities = read_engine_capabilities(path)
-    expected_imgsz = int(system_cfg.get("imgsz", 0))
-    if expected_imgsz and capabilities.imgsz != (expected_imgsz, expected_imgsz):
+    expected_imgsz = normalize_image_size(system_cfg.get("imgsz", 640))
+    if capabilities.imgsz != expected_imgsz:
         raise ValueError(
             "El engine TensorRT usa imgsz="
             f"{capabilities.imgsz}, pero se solicito {expected_imgsz}"
@@ -140,7 +151,7 @@ def detect_batch(model, frames, system_cfg, with_timing=False):
         device=system_cfg["device"],
         classes=[0],
         conf=float(system_cfg["confidence"]),
-        imgsz=int(system_cfg["imgsz"]),
+        imgsz=normalize_image_size(system_cfg["imgsz"]),
         rect=False,
         batch=len(frames),
         verbose=False,
