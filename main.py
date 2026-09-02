@@ -20,6 +20,7 @@ from metrics.reporting_config import (
     sync_reporting_configuration,
 )
 from metrics.staffing import StaffingStateMachine
+from preview.state import build_preview_payload
 from vision.batching import BatchScheduler, parse_batching_settings
 from vision.capture import open_capture, parse_capture_settings
 from vision.detector import (
@@ -37,6 +38,7 @@ LOG_DIR = Path(os.environ.get("AEYE_LOG_DIR", "/workspace/aeye-yolo/logs"))
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 ALERT_IMG_DIR = LOG_DIR / "alert_images"
 ALERT_IMG_DIR.mkdir(parents=True, exist_ok=True)
+PREVIEW_DIR = Path(__file__).resolve().parent / "preview"
 
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
@@ -45,6 +47,16 @@ STATE = {}
 LATEST_JPEG = {}
 PREVIEW_ENABLED = False
 STOP_EVENT = threading.Event()
+
+
+def preview_payload(refresh_ms=1000):
+    """Devuelve solo el estado necesario para representar el visor local."""
+    with STATE_LOCK:
+        return build_preview_payload(
+            STATE,
+            PREVIEW_ENABLED,
+            refresh_ms,
+        )
 
 
 def now_iso():
@@ -350,6 +362,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Resuelve controles, imagenes, estado JSON y pagina principal."""
         global PREVIEW_ENABLED
 
+        path = self.path.split("?", 1)[0]
         if self.path.startswith("/preview/on"):
             PREVIEW_ENABLED = True
             self.send_response(302)
@@ -376,49 +389,48 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send(404, "text/plain; charset=utf-8", b"Preview no disponible")
             return
 
-        if self.path == "/state.json":
+        if path == "/state.json":
             with STATE_LOCK:
                 data = json.dumps(STATE, ensure_ascii=False).encode("utf-8")
             self._send(200, "application/json; charset=utf-8", data)
             return
 
-        if self.path == "/" or self.path.startswith("/?"):
-            with STATE_LOCK:
-                snapshot = dict(STATE)
-            cards = []
-            for cam_id, s in snapshot.items():
-                people = s.get("people")
-                people_label = people if people is not None else "sin datos"
-                cards.append(f"""
-                <section class="card">
-                  <h2>{cam_id} — {s.get('name','')}</h2>
-                  <p>{s.get('zone','')} | personas: <b>{people_label}</b> | {s.get('rule_state','')}</p>
-                  <img class="cam" data-cam="{cam_id}" alt="{cam_id}" />
-                </section>
-                """)
-            refresh_ms = 1000
-            body = f"""<!doctype html>
-<html><head><meta charset="utf-8"><title>AEYE Preview</title>
-<style>
-body{{font-family:sans-serif;background:#111;color:#eee;margin:20px}}
-.controls{{margin-bottom:16px}} a{{color:#8cf;margin-right:16px}}
-.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}}
-.card{{background:#222;padding:12px;border-radius:10px}}
-img{{width:100%;min-height:160px;object-fit:contain;background:#000}}
-</style></head>
-<body>
-<h1>AEYE — Preview {"ON" if PREVIEW_ENABLED else "OFF"}</h1>
-<div class="controls"><a href="/preview/on">Activar preview</a><a href="/preview/off">Desactivar preview</a></div>
-<div class="grid">{''.join(cards)}</div>
-<script>
-setInterval(() => {{
-  document.querySelectorAll('img.cam').forEach(img => {{
-    img.src = '/camera/' + img.dataset.cam + '.jpg?t=' + Date.now();
-  }});
-}}, {refresh_ms});
-</script>
-</body></html>"""
-            self._send(200, "text/html; charset=utf-8", body.encode("utf-8"))
+        if path == "/preview-state.json":
+            data = json.dumps(
+                preview_payload(), ensure_ascii=False
+            ).encode("utf-8")
+            self._send(200, "application/json; charset=utf-8", data)
+            return
+
+        assets = {
+            "/preview.css": ("text/css; charset=utf-8", "preview.css"),
+            "/preview.js": ("text/javascript; charset=utf-8", "preview.js"),
+        }
+        if path in assets:
+            content_type, filename = assets[path]
+            try:
+                data = (PREVIEW_DIR / filename).read_bytes()
+            except OSError:
+                self._send(
+                    500,
+                    "text/plain; charset=utf-8",
+                    b"Recurso de preview no disponible",
+                )
+                return
+            self._send(200, content_type, data)
+            return
+
+        if path == "/":
+            try:
+                body = (PREVIEW_DIR / "index.html").read_bytes()
+            except OSError:
+                self._send(
+                    500,
+                    "text/plain; charset=utf-8",
+                    b"Interfaz de preview no disponible",
+                )
+                return
+            self._send(200, "text/html; charset=utf-8", body)
             return
 
         self._send(404, "text/plain", b"Not found")

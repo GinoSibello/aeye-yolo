@@ -193,6 +193,10 @@ Jetson. El preview esta desactivado inicialmente para evitar trabajo de
 codificacion JPEG cuando no se necesita. Los conteos y reportes siguen
 funcionando con el preview apagado.
 
+Cada tarjeta del visor permite ampliar una camara y ocultar temporalmente las
+demas. El boton `Todas las camaras` o la tecla `Escape` restaura la vista de
+cuadricula.
+
 La configuracion inicial de puestos y horarios se explica en
 [ACTIVITY_REPORTING.md](ACTIVITY_REPORTING.md).
 

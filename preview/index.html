@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AEYE Preview</title>
+  <link rel="stylesheet" href="/preview.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="identity">
+      <span class="product">AEYE</span>
+      <h1 id="page-title">Preview de cámaras</h1>
+    </div>
+    <div class="toolbar">
+      <button id="back-to-grid" class="button back-button hidden" type="button">
+        <span aria-hidden="true">←</span>
+        Todas las cámaras
+      </button>
+      <a id="preview-toggle" class="button toggle-button" href="/preview/on">
+        Activar preview
+      </a>
+    </div>
+  </header>
+
+  <main>
+    <section class="overview-strip" aria-label="Estado del visor">
+      <div>
+        <span id="preview-status" class="status-dot"></span>
+        <strong id="preview-label">Comprobando preview</strong>
+      </div>
+      <span id="camera-count" class="camera-count">0 cámaras</span>
+    </section>
+
+    <div id="error" class="notice hidden" role="alert"></div>
+    <section id="camera-grid" class="camera-grid" aria-live="polite">
+      <p id="loading" class="loading">Cargando cámaras...</p>
+    </section>
+  </main>
+
+  <script src="/preview.js" defer></script>
+</body>
+</html>
+
