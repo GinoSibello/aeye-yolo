@@ -1,14 +1,16 @@
 """Registra muestras auditables y administra incidentes confirmados."""
 
 from datetime import datetime
+from uuid import uuid4
 
 
 class MetricsRecorder:
     """Reduce muestras y sincroniza transiciones confirmadas con SQLite."""
 
-    def __init__(self, repository, sample_every_seconds=5):
+    def __init__(self, repository, sample_every_seconds=5, run_id=None):
         self.repository = repository
         self.sample_every_seconds = float(sample_every_seconds)
+        self.run_id = run_id or uuid4().hex
         self.last_sample = {}
         self.open_incidents = {}
 
@@ -27,8 +29,8 @@ class MetricsRecorder:
             recovered += 1
         return recovered
 
-    def observe(self, camera, observation, at=None):
-        """Guarda una observacion y aplica su apertura/cierre de incidente."""
+    def observe(self, camera, observation, at=None, track_ids=None):
+        """Guarda una observacion, tracks anonimos e incidentes confirmados."""
         now = at or datetime.now().astimezone()
         cam_id = camera["id"]
         minimum = int(camera.get("min_people", 0))
@@ -48,6 +50,13 @@ class MetricsRecorder:
                 observation.staffing_status,
             )
             self.last_sample[cam_id] = now
+            if observation.data_status == "valid":
+                self.repository.add_track_observations(
+                    self.run_id,
+                    cam_id,
+                    now,
+                    track_ids or (),
+                )
 
         transition = observation.transition or {}
         current = self.open_incidents.get(cam_id)

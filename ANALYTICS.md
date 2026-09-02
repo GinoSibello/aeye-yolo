@@ -13,6 +13,9 @@ personas.
 
 ## Consultas disponibles
 
+- `GET /api/reports/daily?day=AAAA-MM-DD`
+- `GET /api/reports/daily.csv?day=AAAA-MM-DD`
+- `GET /api/reporting/configuration`
 - `GET /api/analytics/understaffed-hours?zone=Caja&start=...&end=...`
 - `GET /api/analytics/minutes-below-minimum?zone=Zona%20A&start=...&end=...`
 - `GET /api/analytics/employee-zone-time?start=...&end=...&employee_id=EMP0042`
@@ -24,7 +27,8 @@ personas.
 Los intervalos son semiabiertos: `start` se incluye y `end` no. Usar timestamps
 ISO 8601 con zona horaria, por ejemplo `2026-08-10T00:00:00-03:00`.
 
-Iniciar la API dentro del contenedor:
+`./run.sh` inicia la API junto con el motor. Para desarrollo puede iniciarse
+solamente FastAPI dentro del contenedor:
 
 ```bash
 uvicorn api.app:app --host 0.0.0.0 --port 8000

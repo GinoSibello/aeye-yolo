@@ -27,4 +27,4 @@ ENV AEYE_CONFIG=/workspace/aeye-yolo/cameras.json
 ENV AEYE_LOG_DIR=/workspace/aeye-yolo/logs
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 
-CMD ["python3", "main.py"]
+CMD ["bash", "tools/start_runtime.sh"]

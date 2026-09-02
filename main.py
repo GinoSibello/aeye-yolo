@@ -12,8 +12,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from database.repository import Repository
+from metrics.access import AccessRecorder
 from metrics.performance import PerformanceMonitor
 from metrics.recorder import MetricsRecorder
+from metrics.reporting_config import (
+    prepare_cameras,
+    sync_reporting_configuration,
+)
 from metrics.staffing import StaffingStateMachine
 from vision.batching import BatchScheduler, parse_batching_settings
 from vision.capture import open_capture, parse_capture_settings
@@ -24,6 +29,7 @@ from vision.detector import (
     validate_engine_for_batching,
 )
 from vision.pipeline import frame_snapshot, parse_pipeline_settings
+from vision.regions import AccessLineTracker, tracks_in_roi
 from vision.tracker import ByteTrackAdapter
 
 CONFIG_PATH = Path(os.environ.get("AEYE_CONFIG", "/workspace/aeye-yolo/cameras.json"))
@@ -270,8 +276,31 @@ def send_alert(alert_cfg, payload):
             log(f"ERROR enviando webhook: {e}")
 
 
-def draw_overlay(frame, cam, boxes, ids, count, rule_state, remaining):
-    """Dibuja cajas, IDs temporales y estado operativo sobre un frame."""
+def draw_overlay(
+    frame, cam, boxes, ids, count, rule_state, remaining, reporting=None
+):
+    """Dibuja tracks, ROI, acceso y estado operativo sobre un frame."""
+    reporting = reporting or {}
+    height, width = frame.shape[:2]
+    roi = reporting.get("roi", [])
+    if roi:
+        points = [
+            (int(point[0] * width), int(point[1] * height))
+            for point in roi
+        ]
+        for start, end in zip(points, points[1:] + points[:1]):
+            cv2.line(frame, start, end, (32, 180, 90), 2)
+    access = reporting.get("access_line", {})
+    if access.get("enabled"):
+        start = (
+            int(access["start"][0] * width),
+            int(access["start"][1] * height),
+        )
+        end = (
+            int(access["end"][0] * width),
+            int(access["end"][1] * height),
+        )
+        cv2.line(frame, start, end, (0, 210, 255), 3)
     for box, tid in zip(boxes, ids):
         x1, y1, x2, y2 = [int(v) for v in box]
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
@@ -420,6 +449,8 @@ def main():
     pipeline_settings = parse_pipeline_settings(system_cfg)
     repository = None
     metrics_recorder = None
+    access_recorder = None
+    reporting_rows = None
     if database_cfg.get("enabled", True):
         db_path = os.environ.get("AEYE_DB_PATH", database_cfg.get("path", str(LOG_DIR / "aeye.db")))
         repository = Repository(db_path)
@@ -429,7 +460,15 @@ def main():
         interrupted = metrics_recorder.recover_after_restart()
         if interrupted:
             log(f"Incidentes interrumpidos por reinicio: {interrupted}")
+        reporting_rows = sync_reporting_configuration(repository, cfg)
+        access_recorder = AccessRecorder(repository, metrics_recorder.run_id)
+        aborted_visits = access_recorder.recover_after_restart()
+        if aborted_visits:
+            log(f"Visitas anonimas interrumpidas por reinicio: {aborted_visits}")
         log(f"Base de datos: {db_path}")
+    else:
+        reporting_rows = prepare_cameras(cfg)
+    reporting_by_id = {row["camera_id"]: row for row in reporting_rows}
     cameras = [c for c in cfg["cameras"] if c.get("enabled", False)]
 
     if not cameras:
@@ -477,6 +516,7 @@ def main():
 
     readers = {}
     trackers = {}
+    access_trackers = {}
     rules = {}
     last_log = {}
 
@@ -484,12 +524,20 @@ def main():
         reader = CameraReader(cam, capture_cfg, pipeline_settings)
         readers[cam["id"]] = reader
         trackers[cam["id"]] = ByteTrackAdapter(system_cfg.get("tracker", {}))
+        access_trackers[cam["id"]] = AccessLineTracker(
+            reporting_by_id[cam["id"]]["access_line"]
+        )
         rules[cam["id"]] = StaffingStateMachine(cam, system_cfg)
         last_log[cam["id"]] = 0.0
         with STATE_LOCK:
             STATE[cam["id"]] = {
                 "name": cam["name"],
                 "zone": cam.get("zone", ""),
+                "role": reporting_by_id[cam["id"]]["role"],
+                "expected_people": reporting_by_id[cam["id"]]["expected_people"],
+                "configuration_status": reporting_by_id[cam["id"]][
+                    "configuration_status"
+                ],
                 "ip": cam["ip"],
                 "connected": False,
                 "data_status": "no_data",
@@ -527,8 +575,8 @@ def main():
             performance_monitor.record_error(cam_id)
             last_error = f"Inferencia/tracking: {error}"
         observation = rules[cam_id].no_data()
-        if metrics_recorder and cam.get("monitor_staffing", False):
-            metrics_recorder.observe(cam, observation)
+        if metrics_recorder and cam.get("record_metrics", False):
+            metrics_recorder.observe(cam, observation, track_ids=())
         with STATE_LOCK:
             STATE[cam_id].update({
                 "connected": reader.connected,
@@ -649,7 +697,7 @@ def main():
                 captured_at = item["captured_at"]
                 try:
                     tracker_started = time.perf_counter()
-                    tracks = trackers[cam_id].update(detections, frame.shape)
+                    all_tracks = trackers[cam_id].update(detections, frame.shape)
                     tracker_ms = (
                         time.perf_counter() - tracker_started
                     ) * 1000.0
@@ -657,6 +705,17 @@ def main():
                     mark_no_data(cam_id, error)
                     continue
 
+                if access_recorder:
+                    access_events = access_trackers[cam_id].update(
+                        all_tracks, frame.shape
+                    )
+                    for event in access_events:
+                        access_recorder.observe(cam_id, event)
+                tracks = tracks_in_roi(
+                    all_tracks,
+                    frame.shape,
+                    reporting_by_id[cam_id]["roi"],
+                )
                 boxes = [track.box for track in tracks]
                 ids = [track.track_id for track in tracks]
                 raw_count = len(tracks)
@@ -686,8 +745,10 @@ def main():
                     cam_id, seq, timings
                 )
                 infer_ms = detector_timings.get("inference_ms")
-                if metrics_recorder and cam.get("monitor_staffing", False):
-                    metrics_recorder.observe(cam, observation)
+                if metrics_recorder and cam.get("record_metrics", False):
+                    metrics_recorder.observe(
+                        cam, observation, track_ids=ids
+                    )
 
                 if observation.alert:
                     detail = dict(observation.alert)
@@ -712,6 +773,13 @@ def main():
                 state_row = {
                     "name": cam["name"],
                     "zone": cam.get("zone", ""),
+                    "role": reporting_by_id[cam_id]["role"],
+                    "expected_people": reporting_by_id[cam_id][
+                        "expected_people"
+                    ],
+                    "configuration_status": reporting_by_id[cam_id][
+                        "configuration_status"
+                    ],
                     "ip": cam["ip"],
                     "connected": reader.connected,
                     "data_status": observation.data_status,
@@ -762,6 +830,7 @@ def main():
                         count,
                         rule_state,
                         remaining,
+                        reporting_by_id[cam_id],
                     )
                     ok, buf = cv2.imencode(
                         ".jpg",

@@ -21,4 +21,5 @@ sudo docker run --rm -it \
   --mount "type=bind,src=$SECRET_FILE,dst=/run/secrets/camera_password,readonly" \
   -v "$PROJECT_DIR:/workspace/aeye-yolo" \
   -w /workspace/aeye-yolo \
-  aeye-yolo:dev
+  aeye-yolo:dev \
+  bash tools/start_runtime.sh

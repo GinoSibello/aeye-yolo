@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AEYE Actividad</title>
+  <link rel="stylesheet" href="/assets/dashboard.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="product">AEYE</p>
+      <h1>Reportes de actividad</h1>
+    </div>
+    <nav class="top-actions" aria-label="Acciones">
+      <a id="csv-link" class="button secondary" href="#">Descargar CSV</a>
+      <button id="refresh" class="button primary" type="button">Actualizar</button>
+    </nav>
+  </header>
+  <main>
+    <section class="filters" aria-label="Periodo">
+      <label for="report-date">Fecha</label>
+      <input id="report-date" type="date">
+      <span id="timezone" class="muted"></span>
+      <span id="updated" class="muted push"></span>
+    </section>
+    <div id="error" class="notice error hidden" role="alert"></div>
+    <div id="pending" class="notice warning hidden"></div>
+    <section class="summary-band" aria-labelledby="summary-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">Resumen diario</p><h2 id="summary-title">Actividad de puestos</h2></div>
+        <span class="estimate-label">Estimaciones anonimas</span>
+      </div>
+      <div id="summary" class="metrics-grid" aria-live="polite"></div>
+    </section>
+    <section class="section" aria-labelledby="workstations-title">
+      <div class="section-heading"><div><p class="eyebrow">Operacion</p><h2 id="workstations-title">Puestos de trabajo</h2></div></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Puesto</th><th>Horario</th><th>Esperadas</th><th>Promedio</th>
+            <th>Datos</th><th>Dotacion completa</th><th>Faltantes</th>
+            <th>Llegadas tarde</th><th>Salida anticipada</th>
+            <th>Despues de hora</th><th>Pausas excedidas</th>
+          </tr></thead>
+          <tbody id="workstations"></tbody>
+        </table>
+      </div>
+    </section>
+    <section class="section" aria-labelledby="timeline-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">Distribucion horaria</p><h2 id="timeline-title">Ocupacion por hora</h2></div>
+        <div class="legend" aria-label="Leyenda">
+          <span><i class="swatch complete"></i> Completa</span>
+          <span><i class="swatch partial"></i> Parcial</span>
+          <span><i class="swatch no-data"></i> Sin datos</span>
+        </div>
+      </div>
+      <div id="timelines" class="timelines"></div>
+    </section>
+    <section class="section" aria-labelledby="areas-title">
+      <div class="section-heading"><div><p class="eyebrow">Areas comunes</p><h2 id="areas-title">Bano y comedor</h2></div></div>
+      <div id="special-areas" class="area-grid"></div>
+    </section>
+    <section class="quality-band" aria-labelledby="quality-title">
+      <div><p class="eyebrow">Auditabilidad</p><h2 id="quality-title">Calidad del reporte</h2></div>
+      <dl id="quality" class="quality-list"></dl>
+    </section>
+  </main>
+  <footer><span>AEYE</span><span>Conteos agregados sin identificacion de empleados</span></footer>
+  <script src="/assets/dashboard.js" defer></script>
+</body>
+</html>

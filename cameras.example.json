@@ -38,7 +38,7 @@
   },
   "preview": {
     "enabled": false,
-    "host": "0.0.0.0",
+    "host": "127.0.0.1",
     "port": 8080,
     "jpeg_quality": 70,
     "refresh_ms": 1000
@@ -50,6 +50,27 @@
   "database": {
     "enabled": true,
     "path": "/workspace/aeye-yolo/data/aeye.db"
+  },
+  "reporting": {
+    "enabled": true,
+    "timezone": "America/Argentina/Buenos_Aires",
+    "workdays": [0, 1, 2, 3, 4],
+    "shift": {
+      "start": null,
+      "end": null,
+      "arrival_grace_minutes": 5,
+      "early_departure_tolerance_minutes": 5,
+      "overtime_tolerance_minutes": 10,
+      "overtime_observation_minutes": 180
+    },
+    "meal": {
+      "window_start": null,
+      "window_end": null,
+      "allowed_minutes": null
+    },
+    "max_sample_gap_seconds": 15,
+    "absence_merge_gap_minutes": 2,
+    "track_session_gap_seconds": 15
   },
   "cameras": [
     {
@@ -63,8 +84,12 @@
       "password_env": "CAMERA_PASSWORD",
       "channel": 102,
       "monitor_staffing": true,
+      "reporting_enabled": true,
+      "role": "workstation",
+      "expected_people": 1,
       "min_people": 1,
-      "max_people": 1
+      "max_people": 1,
+      "roi": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
     },
     {
       "id": "cam02",
@@ -77,8 +102,12 @@
       "password_env": "CAMERA_PASSWORD",
       "channel": 102,
       "monitor_staffing": false,
+      "reporting_enabled": true,
+      "role": "workstation",
+      "expected_people": null,
       "min_people": 0,
-      "max_people": 99
+      "max_people": 99,
+      "roi": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
     }
   ]
 }

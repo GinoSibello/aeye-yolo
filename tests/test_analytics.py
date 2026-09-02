@@ -81,7 +81,12 @@ class AnalyticsTest(unittest.TestCase):
         )
         self.assertEqual(
             [row["name"] for row in migrations],
-            ["001_initial.sql", "002_data_quality.sql"],
+            [
+                "001_initial.sql",
+                "002_data_quality.sql",
+                "003_activity_reporting.sql",
+                "004_activity_query_indexes.sql",
+            ],
         )
         reopened.close()
 

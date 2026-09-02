@@ -19,9 +19,11 @@ TensorRT.
 - Conteo suavizado, histeresis y estado explicito `no_data`.
 - Alertas por consola o webhook despues de un tiempo configurable.
 - Captura JPEG del frame que origina cada alerta.
-- Dashboard web con estado y preview opcional.
-- Persistencia SQLite de muestras de ocupacion e incidentes.
+- Dashboard diario de puestos, horarios, pausas y areas comunes.
+- ROI por camara y lineas de acceso opcionales para visitas anonimas.
+- Persistencia SQLite de ocupacion, tracks locales, cruces e incidentes.
 - API FastAPI para consultar metricas agregadas.
+- Descarga CSV de reportes por puesto.
 - Herramienta para medir la latencia del engine TensorRT.
 - Baseline reproducible con latencias por etapa y telemetria de la Jetson.
 
@@ -47,7 +49,7 @@ YOLO / TensorRT (detecta cajas de clase persona)
               +--> logs/alerts.jsonl e imagen de evidencia
               +--> webhook opcional
 
-Dashboard HTTP :8080              API analitica opcional :8000
+Visor privado :8080              Dashboard y API LAN :8000
 ```
 
 ## Requisitos
@@ -114,14 +116,15 @@ variable `CAMERA_PASSWORD`, pero el arranque normal utiliza el archivo secreto.
 
 ## Configuracion
 
-La configuracion se divide en cuatro secciones:
+La configuracion se divide en seis secciones:
 
 | Seccion | Responsabilidad |
 | --- | --- |
 | `system` | Engine TensorRT, resolucion, frecuencia, batching y pipeline |
-| `preview` | Dashboard, puerto y calidad JPEG |
+| `preview` | Visor local, puerto y calidad JPEG |
 | `alerts` | Salida por consola o webhook |
 | `database` | Activacion y ruta de SQLite |
+| `reporting` | Zona horaria, turno, comida y tolerancias |
 | `cameras` | Conexion y regla de cada camara |
 
 Campos principales de cada camara:
@@ -132,7 +135,12 @@ Campos principales de cada camara:
 | `ip`, `port`, `channel` | Conexion RTSP |
 | `username` | Usuario RTSP; la contrasena se obtiene del secreto |
 | `zone` | Nombre operativo usado en metricas |
-| `monitor_staffing` | Guarda metricas y evalua dotacion |
+| `role` | `workstation`, `restroom`, `dining` u `other` |
+| `reporting_enabled` | Guarda muestras para reportes |
+| `expected_people` | Dotacion fija del puesto |
+| `roi` | Poligono normalizado que delimita la zona |
+| `access_line` | Linea opcional de entrada/salida |
+| `monitor_staffing` | Evalua dotacion y genera incidentes |
 | `min_people`, `max_people` | Rango esperado en la zona |
 
 Variables de entorno admitidas:
@@ -143,6 +151,8 @@ Variables de entorno admitidas:
 | `AEYE_LOG_DIR` | `/workspace/aeye-yolo/logs` |
 | `AEYE_PERFORMANCE_PATH` | `<AEYE_LOG_DIR>/performance_summary.json` |
 | `AEYE_DB_PATH` | Valor de `database.path` |
+| `AEYE_API_HOST` | `0.0.0.0` |
+| `AEYE_API_PORT` | `8000` |
 | `CAMERA_PASSWORD_FILE` | `/run/secrets/camera_password` |
 | `CAMERA_PASSWORD` | Alternativa de desarrollo si no existe el archivo |
 
@@ -169,25 +179,22 @@ Estos valores deben calibrarse con imagenes reales de cada instalacion.
 ./run.sh
 ```
 
-El dashboard queda disponible en:
+El dashboard historico y la API se inician junto con el motor:
 
 ```text
-http://IP_DE_LA_JETSON:8080
+http://IP_DE_LA_JETSON:8000
 ```
 
-Rutas integradas:
+Cualquier equipo de la red local puede abrirlo. Por ahora no tiene usuario ni
+contrasena, por lo que el puerto 8000 no debe exponerse a Internet.
 
-| Ruta | Funcion |
-| --- | --- |
-| `/` | Dashboard y estado de todas las camaras |
-| `/state.json` | Estado actual en JSON |
-| `/preview/on` | Activa la generacion de previews |
-| `/preview/off` | Desactiva previews y libera las imagenes en memoria |
-| `/camera/<id>.jpg` | Ultimo preview JPEG disponible |
+El visor en vivo permanece en `http://127.0.0.1:8080` y solo se abre desde la
+Jetson. El preview esta desactivado inicialmente para evitar trabajo de
+codificacion JPEG cuando no se necesita. Los conteos y reportes siguen
+funcionando con el preview apagado.
 
-El preview esta desactivado inicialmente para evitar trabajo de codificacion
-JPEG cuando no se necesita. Los conteos siguen funcionando con el preview
-apagado.
+La configuracion inicial de puestos y horarios se explica en
+[ACTIVITY_REPORTING.md](ACTIVITY_REPORTING.md).
 
 ## Reglas, incidentes y alertas
 
@@ -215,27 +222,22 @@ Las alertas se escriben en `logs/alerts.jsonl`. El frame asociado se guarda en
 
 ## Datos y API analitica
 
-SQLite se inicializa automaticamente mediante
-`database/migrations/001_initial.sql`. Guarda camaras, muestras de ocupacion,
-incidentes y estructuras preparadas para identidad no biometrica y sesiones por
-zona.
+SQLite se inicializa automaticamente con las migraciones de
+`database/migrations/`. Guarda camaras, muestras de ocupacion, incidentes,
+configuracion efectiva, tracks locales, cruces y visitas anonimas.
 
-La API no se inicia con `run.sh`. Puede ejecutarse como un segundo proceso:
-
-```bash
-sudo docker run --rm -it \
-  --network host \
-  -v "$PWD:/workspace/aeye-yolo" \
-  -w /workspace/aeye-yolo \
-  aeye-yolo:dev \
-  uvicorn api.app:app --host 0.0.0.0 --port 8000
-```
-
-Documentacion interactiva:
+`run.sh` inicia la vision y la API en el mismo contenedor. La documentacion
+interactiva queda en:
 
 ```text
 http://IP_DE_LA_JETSON:8000/docs
 ```
+
+Rutas de reporte:
+
+- `GET /api/reports/daily?day=AAAA-MM-DD`
+- `GET /api/reports/daily.csv?day=AAAA-MM-DD`
+- `GET /api/reporting/configuration`
 
 Consultas disponibles:
 
@@ -342,13 +344,14 @@ conteos, pero no precision si las imagenes no fueron anotadas manualmente.
 ## Estructura del proyecto
 
 ```text
-api/                 API FastAPI de metricas
+api/                 Dashboard y API FastAPI de reportes
 database/            Repositorio SQLite, modelos y migraciones
 identity/            Enlace temporal con identidades externas verificables
-metrics/             Registro de ocupacion y consultas analiticas
+metrics/             Registro, reglas y reportes de actividad
 tools/               Benchmark y utilidades de Jetson
 vision/              Captura, pipeline, batching, tracking y TensorRT
-main.py              Orquestacion RTSP, tracking, reglas y dashboard
+main.py              Orquestacion RTSP, tracking, reglas y visor local
+ACTIVITY_REPORTING.md Configuracion y limites del reporte diario
 cameras.example.json Plantilla publica de configuracion
 Dockerfile           Entorno NVIDIA reproducible
 run.sh               Arranque local con secreto montado
@@ -360,7 +363,8 @@ run.sh               Arranque local con secreto montado
   complejas y necesita calibracion por instalacion.
 - Los IDs son anonimos, locales por camara y se reinician con el proceso.
 - El conteo no distingue empleados, clientes o proveedores.
-- La aplicacion todavia no filtra regiones de interes dentro de una imagen.
+- Cada ROI debe calibrarse; una ROI completa puede contar pasillos o puestos
+  vecinos.
 - Una deteccion visual no demuestra productividad, intencion ni cumplimiento
   individual.
 - Las metricas deben validarse contra conteos humanos representativos antes de

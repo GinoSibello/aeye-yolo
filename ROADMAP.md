@@ -26,13 +26,23 @@ en la Jetson.
 - [x] **Comparacion de modelos FP16.** YOLO11/YOLO26 nano y small en 640 y
   960x544, precision sobre 5.000 imagenes anotadas y prueba de ocho camaras.
   YOLO26s 640 queda como ganador preliminar; INT8 espera datos AEYE anotados.
+- [x] **ROI por camara.** El conteo usa el centro inferior de cada track dentro
+  de un poligono normalizado. Falta calibrar los poligonos con escenas reales.
+- [x] **MVP de actividad anonima.** Reportes diarios de ocupacion, dotacion,
+  tardanzas, salidas, tiempo extra y pausas por cupos anonimos.
+- [x] **Bano y comedor sin identidad.** Se guardan tracks locales y existe
+  medicion FIFO de visitas por linea de acceso. Falta ubicar las lineas reales.
+- [x] **Dashboard y CSV.** FastAPI publica reportes historicos en la red local,
+  configuracion efectiva y exportacion por puesto.
+- [x] **Calidad auditable.** La cobertura se muestra por separado y los
+  intervalos sin datos o sin configuracion no se convierten en ceros.
 - [x] **Cierre de SQLite.** El repositorio libera su conexion y las pruebas pueden
   eliminar correctamente las bases temporales en Windows.
 
 ## Pendiente
 
-- [ ] **1. Regiones de interes por camara.** Definir poligonos para contar solo
-  personas dentro de la zona operativa correspondiente.
+- [ ] **Calibracion del MVP.** Completar nombres, dotaciones, horarios, ROI y
+  lineas de acceso; contrastar conteos y eventos contra observacion humana.
 - [ ] **5. Reglas versionadas y auditoria completa.** Guardar cada version de
   minimo/maximo, su vigencia, motivo del cambio y relacion con cada muestra.
 - [ ] **6. Revision humana.** Crear API y pantalla para marcar incidentes como
@@ -43,6 +53,17 @@ en la Jetson.
   las camaras reales.
 - [ ] **9. Identidad externa opcional.** Integrar badge, QR o RFID antes de
   habilitar tiempos individuales y transiciones de empleados.
+
+## Etapas de optimizacion aplazadas
+
+- [ ] **Etapa 6. Datos reales AEYE.** Anotar imagenes representativas, repetir
+  precision por camara y decidir si conviene ajustar o entrenar un modelo.
+- [ ] **Etapa 7. DeepStream.** Evaluarlo solamente si la validacion operativa
+  demuestra que el pipeline actual limita la escala o la estabilidad.
+- [ ] **Etapa 8. Energia y termica.** Probar modos de potencia y frecuencias
+  despues de respaldar la Jetson y contar con acceso fisico para recuperacion.
+- [ ] **INT8.** Calibrar solo con datos AEYE y aceptar el engine unicamente si
+  la perdida de precision queda dentro del umbral acordado.
 
 ## Posibles mejoras posteriores
 

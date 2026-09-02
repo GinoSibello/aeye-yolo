@@ -82,6 +82,65 @@ class Repository:
              _iso(seen_at), _iso(seen_at)),
         )
 
+    def upsert_workplace(self, settings):
+        """Materializa nombres, roles y horarios usados por los reportes."""
+        self.execute(
+            """INSERT INTO workplace_settings(
+            camera_id,display_name,zone,role,reporting_enabled,expected_people,
+            timezone,workdays_json,shift_start,shift_end,arrival_grace_minutes,
+            early_departure_tolerance_minutes,overtime_tolerance_minutes,
+            overtime_observation_minutes,meal_window_start,meal_window_end,
+            meal_allowed_minutes,max_sample_gap_seconds,absence_merge_gap_minutes,
+            track_session_gap_seconds,roi_json,access_line_json,
+            configuration_status,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(camera_id) DO UPDATE SET
+            display_name=excluded.display_name,zone=excluded.zone,role=excluded.role,
+            reporting_enabled=excluded.reporting_enabled,
+            expected_people=excluded.expected_people,timezone=excluded.timezone,
+            workdays_json=excluded.workdays_json,shift_start=excluded.shift_start,
+            shift_end=excluded.shift_end,
+            arrival_grace_minutes=excluded.arrival_grace_minutes,
+            early_departure_tolerance_minutes=excluded.early_departure_tolerance_minutes,
+            overtime_tolerance_minutes=excluded.overtime_tolerance_minutes,
+            overtime_observation_minutes=excluded.overtime_observation_minutes,
+            meal_window_start=excluded.meal_window_start,
+            meal_window_end=excluded.meal_window_end,
+            meal_allowed_minutes=excluded.meal_allowed_minutes,
+            max_sample_gap_seconds=excluded.max_sample_gap_seconds,
+            absence_merge_gap_minutes=excluded.absence_merge_gap_minutes,
+            track_session_gap_seconds=excluded.track_session_gap_seconds,
+            roi_json=excluded.roi_json,access_line_json=excluded.access_line_json,
+            configuration_status=excluded.configuration_status,
+            updated_at=excluded.updated_at""",
+            (
+                settings["camera_id"], settings["display_name"], settings["zone"],
+                settings["role"], int(settings["reporting_enabled"]),
+                settings["expected_people"], settings["timezone"],
+                settings["workdays_json"], settings["shift_start"],
+                settings["shift_end"], settings["arrival_grace_minutes"],
+                settings["early_departure_tolerance_minutes"],
+                settings["overtime_tolerance_minutes"],
+                settings["overtime_observation_minutes"],
+                settings["meal_window_start"], settings["meal_window_end"],
+                settings["meal_allowed_minutes"],
+                settings["max_sample_gap_seconds"],
+                settings["absence_merge_gap_minutes"],
+                settings["track_session_gap_seconds"], settings["roi_json"],
+                settings["access_line_json"], settings["configuration_status"],
+                _iso(settings["updated_at"]),
+            ),
+        )
+
+    def workplaces(self, enabled_only=True):
+        """Lista la configuracion efectiva que usa el motor de reportes."""
+        where = "WHERE reporting_enabled=1" if enabled_only else ""
+        return self.query(
+            f"""SELECT * FROM workplace_settings {where}
+            ORDER BY CASE role WHEN 'workstation' THEN 0 WHEN 'restroom' THEN 1
+            WHEN 'dining' THEN 2 ELSE 3 END, camera_id"""
+        )
+
     def add_occupancy(
         self, camera_id, zone, sampled_at, raw_count, smoothed_count,
         minimum, maximum, data_status, status,
@@ -95,6 +154,92 @@ class Repository:
              minimum, maximum, data_status, status),
         )
         return status
+
+    def add_track_observations(
+        self, run_id, camera_id, sampled_at, track_ids,
+    ):
+        """Guarda IDs locales como evidencia anonima, aislados por ejecucion."""
+        rows = [
+            (run_id, camera_id, _iso(sampled_at), str(track_id))
+            for track_id in track_ids
+        ]
+        if not rows:
+            return 0
+        conn = self.connection()
+        conn.executemany(
+            """INSERT OR IGNORE INTO anonymous_track_observations(
+            run_id,camera_id,sampled_at,track_id) VALUES(?,?,?,?)""",
+            rows,
+        )
+        conn.commit()
+        return len(rows)
+
+    def add_access_event(
+        self, run_id, camera_id, event_type, observed_at, track_id, confidence,
+    ):
+        """Persiste un cruce local sin inferir una identidad."""
+        return self.execute(
+            """INSERT INTO access_events(
+            run_id,camera_id,event_type,observed_at,track_id,confidence
+            ) VALUES(?,?,?,?,?,?)""",
+            (
+                run_id, camera_id, event_type, _iso(observed_at),
+                str(track_id), float(confidence),
+            ),
+        ).lastrowid
+
+    def open_visit_count(self, camera_id):
+        """Cuenta visitas FIFO aun sin salida observada."""
+        return self.query(
+            """SELECT COUNT(*) count FROM anonymous_visits
+            WHERE camera_id=? AND status='open'""",
+            (camera_id,),
+        )[0]["count"]
+
+    def start_anonymous_visit(
+        self, camera_id, entered_at, entry_event_id, confidence,
+    ):
+        """Abre una visita anonima a partir de un cruce de entrada."""
+        return self.execute(
+            """INSERT INTO anonymous_visits(
+            camera_id,entered_at,entry_event_id,pairing_method,confidence,status
+            ) VALUES(?,?,?,'fifo',?,'open')""",
+            (camera_id, _iso(entered_at), entry_event_id, float(confidence)),
+        ).lastrowid
+
+    def close_oldest_anonymous_visit(self, camera_id, exited_at, exit_event_id):
+        """Empareja una salida con la entrada abierta mas antigua."""
+        conn = self.connection()
+        visits = conn.execute(
+            """SELECT id,entered_at,confidence FROM anonymous_visits
+            WHERE camera_id=? AND status='open' ORDER BY entered_at,id""",
+            (camera_id,),
+        ).fetchall()
+        if not visits:
+            return None
+        visit = visits[0]
+        confidence = min(float(visit["confidence"]), 0.7 if len(visits) == 1 else 0.4)
+        conn.execute(
+            """UPDATE anonymous_visits SET exited_at=?,
+            duration_seconds=MAX(0,(julianday(?) - julianday(entered_at))*86400),
+            exit_event_id=?,confidence=?,status='completed',
+            closure_reason='paired_exit' WHERE id=?""",
+            (
+                _iso(exited_at), _iso(exited_at), exit_event_id,
+                confidence, visit["id"],
+            ),
+        )
+        conn.commit()
+        return {"id": visit["id"], "confidence": confidence}
+
+    def abort_open_visits(self, reason):
+        """Marca como no medibles las visitas que atravesaron un reinicio."""
+        cursor = self.execute(
+            """UPDATE anonymous_visits SET status='aborted',closure_reason=?
+            WHERE status='open'""",
+            (reason,),
+        )
+        return cursor.rowcount
 
     def start_incident(self, camera_id, zone, kind, started_at, minimum, maximum, count):
         """Abre un incidente de faltantes o sobrantes y devuelve su ID."""
