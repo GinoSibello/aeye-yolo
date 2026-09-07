@@ -179,6 +179,17 @@ Estos valores deben calibrarse con imagenes reales de cada instalacion.
 ./run.sh
 ```
 
+El script crea el contenedor persistente `aeye-runtime` en segundo plano con
+la politica `unless-stopped`. Docker lo inicia de nuevo automaticamente cuando
+arranca la Jetson. Ejecutar `./run.sh` otra vez reutiliza el mismo contenedor.
+
+Para consultar su estado y sus logs:
+
+```bash
+docker ps --filter name=aeye-runtime
+docker logs --tail 50 -f aeye-runtime
+```
+
 El dashboard historico y la API se inician junto con el motor:
 
 ```text
@@ -240,6 +251,7 @@ http://IP_DE_LA_JETSON:8000/docs
 Rutas de reporte:
 
 - `GET /api/reports/daily?day=AAAA-MM-DD`
+- `GET /api/reports/weekly?week=AAAA-MM-DD`
 - `GET /api/reports/daily.csv?day=AAAA-MM-DD`
 - `GET /api/reporting/configuration`
 

@@ -16,6 +16,7 @@ from database.repository import Repository
 from metrics.activity import ActivityAnalytics
 from metrics.analytics import Analytics
 from metrics.reporting_config import sync_reporting_configuration
+from metrics.weekly import WeeklyActivityAnalytics
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -38,6 +39,7 @@ if config.get("cameras"):
 
 analytics = Analytics(repository)
 activity = ActivityAnalytics(repository)
+weekly_activity = WeeklyActivityAnalytics(repository)
 app = FastAPI(title="AEYE API", version="0.2.0")
 app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
 
@@ -138,6 +140,12 @@ def reporting_configuration():
 def daily_report(day: date = Query(default_factory=date.today)):
     """Devuelve ocupacion y estimaciones anonimas para un dia local."""
     return activity.daily_report(day)
+
+
+@app.get("/api/reports/weekly")
+def weekly_report(week: date = Query(default_factory=date.today)):
+    """Devuelve un resumen de lunes a domingo para jefatura."""
+    return weekly_activity.weekly_report(week)
 
 
 @app.get("/api/reports/daily.csv")

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from database.repository import Repository
 from metrics.activity import ActivityAnalytics
+from metrics.weekly import WeeklyActivityAnalytics
 from metrics.reporting_config import (
     camera_reporting,
     normalize_reporting,
@@ -106,6 +107,27 @@ class ActivityReportingTest(unittest.TestCase):
             row["departure"]["average_overtime_minutes"], 29
         )
         self.assertEqual(report["summary"]["late_arrivals_estimated"], 1)
+
+    def test_weekly_report_uses_monday_and_preserves_measurement_days(self):
+        self.record_day()
+
+        report = WeeklyActivityAnalytics(
+            self.repository
+        ).weekly_report(date(2026, 8, 12))
+        row = report["workstations"][0]
+
+        self.assertEqual(report["week_start"], "2026-08-10")
+        self.assertEqual(report["week_end"], "2026-08-16")
+        self.assertEqual(row["scheduled_days"], 1)
+        self.assertEqual(row["measured_days"], 1)
+        self.assertGreater(row["occupancy_percent"], 80)
+        self.assertLess(row["occupancy_percent"], 100)
+        self.assertEqual(row["arrival"]["late_arrivals_estimated"], 1)
+        self.assertEqual(row["meal"]["overruns_estimated"], 1)
+        self.assertEqual(
+            report["limitations"]["restroom_by_workstation"],
+            "not_attributable",
+        )
 
     def test_no_data_reduces_coverage_instead_of_occupancy(self):
         start = datetime(2026, 8, 10, 8, tzinfo=timezone.utc)

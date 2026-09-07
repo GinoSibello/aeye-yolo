@@ -12,62 +12,185 @@
       <p class="product">AEYE</p>
       <h1>Reportes de actividad</h1>
     </div>
-    <nav class="top-actions" aria-label="Acciones">
-      <a id="csv-link" class="button secondary" href="#">Descargar CSV</a>
+    <nav class="top-actions" aria-label="Acciones del reporte">
+      <a id="csv-link" class="button secondary daily-action" href="#">
+        Descargar CSV
+      </a>
+      <button id="image-download" class="button secondary weekly-action" type="button">
+        Descargar imagen
+      </button>
+      <button id="pdf-print" class="button secondary weekly-action" type="button">
+        Guardar PDF
+      </button>
       <button id="refresh" class="button primary" type="button">Actualizar</button>
     </nav>
   </header>
+
   <main>
-    <section class="filters" aria-label="Periodo">
-      <label for="report-date">Fecha</label>
+    <section class="filters" aria-label="Periodo del reporte">
+      <div class="period-switch" role="tablist" aria-label="Tipo de reporte">
+        <button id="weekly-mode" class="period-option active" type="button"
+          role="tab" aria-selected="true">Semanal</button>
+        <button id="daily-mode" class="period-option" type="button"
+          role="tab" aria-selected="false">Diario</button>
+      </div>
+      <label id="date-label" for="report-date">Semana que contiene</label>
       <input id="report-date" type="date">
       <span id="timezone" class="muted"></span>
       <span id="updated" class="muted push"></span>
     </section>
+
     <div id="error" class="notice error hidden" role="alert"></div>
     <div id="pending" class="notice warning hidden"></div>
-    <section class="summary-band" aria-labelledby="summary-title">
-      <div class="section-heading">
-        <div><p class="eyebrow">Resumen diario</p><h2 id="summary-title">Actividad de puestos</h2></div>
-        <span class="estimate-label">Estimaciones anonimas</span>
-      </div>
-      <div id="summary" class="metrics-grid" aria-live="polite"></div>
-    </section>
-    <section class="section" aria-labelledby="workstations-title">
-      <div class="section-heading"><div><p class="eyebrow">Operacion</p><h2 id="workstations-title">Puestos de trabajo</h2></div></div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr>
-            <th>Puesto</th><th>Horario</th><th>Esperadas</th><th>Promedio</th>
-            <th>Datos</th><th>Dotacion completa</th><th>Faltantes</th>
-            <th>Llegadas tarde</th><th>Salida anticipada</th>
-            <th>Despues de hora</th><th>Pausas excedidas</th>
-          </tr></thead>
-          <tbody id="workstations"></tbody>
-        </table>
-      </div>
-    </section>
-    <section class="section" aria-labelledby="timeline-title">
-      <div class="section-heading">
-        <div><p class="eyebrow">Distribucion horaria</p><h2 id="timeline-title">Ocupacion por hora</h2></div>
-        <div class="legend" aria-label="Leyenda">
-          <span><i class="swatch complete"></i> Completa</span>
-          <span><i class="swatch partial"></i> Parcial</span>
-          <span><i class="swatch no-data"></i> Sin datos</span>
+
+    <section id="weekly-view" aria-labelledby="weekly-title">
+      <article id="weekly-sheet" class="weekly-sheet">
+        <header class="report-masthead">
+          <div>
+            <p class="report-brand">AEYE · Actividad</p>
+            <h2 id="weekly-title">Resumen semanal de planta</h2>
+            <p id="weekly-period" class="report-period">Semana</p>
+          </div>
+          <div id="weekly-coverage" class="coverage-badge">Cobertura pendiente</div>
+        </header>
+
+        <div class="weekly-layout">
+          <section class="report-panel overall-panel" aria-labelledby="overall-title">
+            <div class="report-panel-heading">
+              <p class="eyebrow">Vista general</p>
+              <h3 id="overall-title">Ocupación promedio</h3>
+            </div>
+            <div id="overall-gauge" class="overall-gauge"></div>
+            <dl id="weekly-facts" class="weekly-facts"></dl>
+          </section>
+
+          <section class="report-panel workstation-gauges-panel"
+            aria-labelledby="gauges-title">
+            <div class="report-panel-heading">
+              <p class="eyebrow">Por puesto</p>
+              <h3 id="gauges-title">Ocupación respecto de la dotación</h3>
+            </div>
+            <div id="workstation-gauges" class="workstation-gauges"></div>
+          </section>
+
+          <section class="report-panel trend-panel" aria-labelledby="trend-title">
+            <div class="report-panel-heading">
+              <p class="eyebrow">Comportamiento semanal</p>
+              <h3 id="trend-title">Ocupación promedio por hora del día</h3>
+            </div>
+            <div id="hourly-chart" class="chart-wrap"></div>
+          </section>
+
+          <section class="report-panel events-panel" aria-labelledby="events-title">
+            <div class="report-panel-heading">
+              <p class="eyebrow">Eventos estimados</p>
+              <h3 id="events-title">Puntualidad y pausas</h3>
+            </div>
+            <dl id="weekly-events" class="event-grid"></dl>
+          </section>
+
+          <section class="report-panel ranking-panel" aria-labelledby="ranking-title">
+            <div class="report-panel-heading">
+              <p class="eyebrow">Atención operativa</p>
+              <h3 id="ranking-title">Puestos con menor ocupación</h3>
+            </div>
+            <div id="occupancy-ranking" class="ranking"></div>
+          </section>
+
+          <section class="report-panel common-panel" aria-labelledby="common-title">
+            <div class="report-panel-heading">
+              <p class="eyebrow">Áreas comunes</p>
+              <h3 id="common-title">Baño y comedor</h3>
+            </div>
+            <div id="weekly-special-areas" class="weekly-special-areas"></div>
+          </section>
         </div>
-      </div>
-      <div id="timelines" class="timelines"></div>
+
+        <aside class="report-limitation">
+          <strong>Alcance:</strong>
+          los conteos son anónimos. AEYE todavía no puede atribuir una visita al
+          baño o comedor a un empleado ni a un puesto concreto.
+        </aside>
+        <footer class="report-footer">
+          <span id="weekly-quality">Calidad del reporte pendiente</span>
+          <span id="weekly-generated">Generado por AEYE</span>
+        </footer>
+      </article>
     </section>
-    <section class="section" aria-labelledby="areas-title">
-      <div class="section-heading"><div><p class="eyebrow">Areas comunes</p><h2 id="areas-title">Bano y comedor</h2></div></div>
-      <div id="special-areas" class="area-grid"></div>
-    </section>
-    <section class="quality-band" aria-labelledby="quality-title">
-      <div><p class="eyebrow">Auditabilidad</p><h2 id="quality-title">Calidad del reporte</h2></div>
-      <dl id="quality" class="quality-list"></dl>
-    </section>
+
+    <div id="daily-view" class="hidden">
+      <section class="summary-band" aria-labelledby="summary-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Resumen diario</p>
+            <h2 id="summary-title">Actividad de puestos</h2>
+          </div>
+          <span class="estimate-label">Estimaciones anónimas</span>
+        </div>
+        <div id="summary" class="metrics-grid" aria-live="polite"></div>
+      </section>
+
+      <section class="section" aria-labelledby="workstations-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Operación</p>
+            <h2 id="workstations-title">Puestos de trabajo</h2>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Puesto</th><th>Horario</th><th>Esperadas</th><th>Promedio</th>
+                <th>Datos</th><th>Dotación completa</th><th>Faltantes</th>
+                <th>Llegadas tarde</th><th>Salida anticipada</th>
+                <th>Después de hora</th><th>Pausas excedidas</th>
+              </tr>
+            </thead>
+            <tbody id="workstations"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="timeline-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Distribución horaria</p>
+            <h2 id="timeline-title">Ocupación por hora</h2>
+          </div>
+          <div class="legend" aria-label="Leyenda">
+            <span><i class="swatch complete"></i> Completa</span>
+            <span><i class="swatch partial"></i> Parcial</span>
+            <span><i class="swatch no-data"></i> Sin datos</span>
+          </div>
+        </div>
+        <div id="timelines" class="timelines"></div>
+      </section>
+
+      <section class="section" aria-labelledby="areas-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Áreas comunes</p>
+            <h2 id="areas-title">Baño y comedor</h2>
+          </div>
+        </div>
+        <div id="special-areas" class="area-grid"></div>
+      </section>
+
+      <section class="quality-band" aria-labelledby="quality-title">
+        <div>
+          <p class="eyebrow">Auditabilidad</p>
+          <h2 id="quality-title">Calidad del reporte</h2>
+        </div>
+        <dl id="quality" class="quality-list"></dl>
+      </section>
+    </div>
   </main>
-  <footer><span>AEYE</span><span>Conteos agregados sin identificacion de empleados</span></footer>
+
+  <footer class="page-footer">
+    <span>AEYE</span>
+    <span>Conteos agregados sin identificación de empleados</span>
+  </footer>
   <script src="/assets/dashboard.js" defer></script>
 </body>
 </html>

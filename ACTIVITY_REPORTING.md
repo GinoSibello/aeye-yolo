@@ -130,8 +130,13 @@ personas. Si falta configuracion o evidencia suficiente, la API devuelve
 - Dashboard de reportes: `http://IP_DE_LA_JETSON:8000`
 - OpenAPI: `http://IP_DE_LA_JETSON:8000/docs`
 - Reporte JSON: `GET /api/reports/daily?day=AAAA-MM-DD`
+- Reporte semanal JSON: `GET /api/reports/weekly?week=AAAA-MM-DD`
 - Descarga CSV: `GET /api/reports/daily.csv?day=AAAA-MM-DD`
 - Configuracion efectiva: `GET /api/reporting/configuration`
+
+La vista semanal toma de lunes a domingo y permite descargar una imagen PNG.
+El boton `Guardar PDF` abre la impresion del navegador con una hoja A4
+horizontal; seleccionar `Guardar como PDF` genera el archivo para jefatura.
 
 Por decision de esta instalacion, el puerto 8000 no usa usuario ni contrasena:
 cualquier equipo de la red local puede ver los reportes. No debe publicarse en
