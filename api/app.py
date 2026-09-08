@@ -148,6 +148,12 @@ def weekly_report(week: date = Query(default_factory=date.today)):
     return weekly_activity.weekly_report(week)
 
 
+@app.get("/api/reports/monthly")
+def monthly_report(month: date = Query(default_factory=date.today)):
+    """Devuelve un resumen del mes calendario para jefatura."""
+    return weekly_activity.monthly_report(month)
+
+
 @app.get("/api/reports/daily.csv")
 def daily_report_csv(day: date = Query(default_factory=date.today)):
     """Exporta una fila por puesto para trabajar el reporte fuera de AEYE."""

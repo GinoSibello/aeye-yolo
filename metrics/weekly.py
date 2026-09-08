@@ -1,14 +1,18 @@
 """Consolida reportes diarios en una vista semanal auditable."""
 
+from bisect import bisect_left, bisect_right
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from metrics.activity import (
     ActivityAnalytics,
     UTC,
+    build_intervals,
     _ratio,
     _round,
     _setting,
+    _shift_period,
+    _timestamp,
 )
 
 
@@ -65,6 +69,48 @@ def _nested_sum(rows, path):
         if current is not None:
             values.append(current)
     return sum(values) if values else None
+
+
+def _alert_summary(rows):
+    """Suma solamente alertas que efectivamente fueron emitidas."""
+    return {
+        key: sum(row.get("alerts", {}).get(key, 0) for row in rows)
+        for key in ("total", "missing", "extra")
+    }
+
+
+def _daily_breakdown(rows):
+    """Conserva evidencia diaria para graficos de una camara."""
+    result = []
+    for row in rows:
+        arrival = row.get("arrival", {})
+        departure = row.get("departure", {})
+        meal = row.get("meal", {})
+        result.append({
+            "date": row["date"],
+            "scheduled": row["scheduled"],
+            "occupancy_percent": row.get("occupancy_percent"),
+            "data_coverage_percent": row.get("data_coverage_percent"),
+            "late_arrivals_estimated": (
+                arrival.get("late_arrivals_estimated")
+                if arrival.get("status") == "estimated" else None
+            ),
+            "early_departures_estimated": (
+                departure.get("early_departures_estimated")
+                if departure.get("early_departures_status") == "estimated"
+                else None
+            ),
+            "overtime_departures_estimated": (
+                departure.get("overtime_departures_estimated")
+                if departure.get("overtime_status") == "estimated" else None
+            ),
+            "meal_overruns_estimated": (
+                meal.get("overruns_estimated")
+                if meal.get("status") == "estimated" else None
+            ),
+            "alerts_total": row.get("alerts", {}).get("total", 0),
+        })
+    return result
 
 
 class WeeklyActivityAnalytics:
@@ -167,10 +213,12 @@ class WeeklyActivityAnalytics:
             "camera_id": setting["camera_id"],
             "name": setting["display_name"],
             "zone": setting["zone"],
+            "role": "workstation",
             "configuration_status": setting["configuration_status"],
             "expected_people": expected,
             "shift_start": setting["shift_start"],
             "shift_end": setting["shift_end"],
+            "arrival_grace_minutes": setting["arrival_grace_minutes"],
             "period_basis": period_basis,
             "scheduled_days": len(scheduled),
             "measured_days": sum(
@@ -236,6 +284,8 @@ class WeeklyActivityAnalytics:
                 "average_break_minutes": average_break,
             },
             "hourly": hourly,
+            "daily": _daily_breakdown(rows),
+            "alerts": _alert_summary(rows),
         }
 
     def _daily_trend(self, reports):
@@ -405,50 +455,133 @@ class WeeklyActivityAnalytics:
             "hourly": self._hourly_summary(workstations),
         }
 
-    def weekly_report(self, selected_day):
-        """Genera el reporte consolidado desde el lunes de la fecha elegida."""
-        if isinstance(selected_day, str):
-            selected_day = date.fromisoformat(selected_day)
-        week_start = selected_day - timedelta(days=selected_day.weekday())
-        week_end = week_start + timedelta(days=6)
-        days = [week_start + timedelta(days=offset) for offset in range(7)]
-        reports = [self.daily.daily_report(day) for day in days]
-        timezone_name = reports[0]["timezone"]
+    def _period_report(self, period_start, period_end, period_name):
+        """Consolida un rango cargando cada cámara una sola vez."""
+        day_count = (period_end - period_start).days + 1
+        days = [
+            period_start + timedelta(days=offset)
+            for offset in range(day_count)
+        ]
         settings = [
             _setting(row) for row in self.repository.workplaces()
         ]
-
-        by_camera = {
-            setting["camera_id"]: []
-            for setting in settings
-            if setting["role"] == "workstation"
-        }
-        for report in reports:
-            for row in report["workstations"]:
-                by_camera.setdefault(row["camera_id"], []).append(row)
-
-        workstations = [
-            self._workstation(setting, by_camera.get(setting["camera_id"], []))
-            for setting in settings
-            if setting["role"] == "workstation"
-        ]
-
+        timezone_name = (
+            settings[0]["timezone"]
+            if settings else "America/Argentina/Buenos_Aires"
+        )
         tz = ZoneInfo(timezone_name)
-        local_start = datetime.combine(week_start, time.min, tzinfo=tz)
-        local_end = local_start + timedelta(days=7)
+        local_start = datetime.combine(period_start, time.min, tzinfo=tz)
+        local_end = datetime.combine(
+            period_end + timedelta(days=1), time.min, tzinfo=tz
+        )
         start = local_start.astimezone(UTC)
         end = local_end.astimezone(UTC)
+
+        daily_workstations = {day: [] for day in days}
+        workstations = []
+        for setting in settings:
+            if setting["role"] != "workstation":
+                continue
+            sample_end = end + timedelta(days=1)
+            all_samples = self.daily._samples(
+                setting["camera_id"], start, sample_end
+            )
+            sample_times = [
+                _timestamp(row["sampled_at"]) for row in all_samples
+            ]
+            all_intervals = build_intervals(
+                all_samples,
+                start,
+                sample_end,
+                setting["max_sample_gap_seconds"],
+            )
+            interval_starts = [row["start"] for row in all_intervals]
+            interval_ends = [row["end"] for row in all_intervals]
+            alert_rows = self.repository.query(
+                """SELECT alerted_at,kind FROM incidents
+                WHERE camera_id=? AND alerted_at>=? AND alerted_at<?
+                ORDER BY alerted_at""",
+                (
+                    setting["camera_id"],
+                    start.isoformat(),
+                    end.isoformat(),
+                ),
+            )
+            alerts_by_day = {
+                day: {"total": 0, "missing": 0, "extra": 0}
+                for day in days
+            }
+            for alert in alert_rows:
+                alert_day = _timestamp(
+                    alert["alerted_at"]
+                ).astimezone(tz).date()
+                if alert_day in alerts_by_day:
+                    alerts_by_day[alert_day][alert["kind"]] += 1
+                    alerts_by_day[alert_day]["total"] += 1
+            camera_rows = []
+            for day in days:
+                day_start = datetime.combine(
+                    day, time.min, tzinfo=tz
+                ).astimezone(UTC)
+                day_end = (
+                    datetime.combine(day, time.min, tzinfo=tz)
+                    + timedelta(days=1)
+                ).astimezone(UTC)
+                shift = _shift_period(day, setting, tz)
+                query_start = min(day_start, shift[0]) if shift else day_start
+                query_end = day_end
+                if shift:
+                    query_end = max(
+                        day_end,
+                        shift[1] + timedelta(
+                            minutes=setting[
+                                "overtime_observation_minutes"
+                            ]
+                        ),
+                    )
+                left = bisect_left(sample_times, query_start)
+                right = bisect_left(sample_times, query_end)
+                interval_left = bisect_right(interval_ends, query_start)
+                interval_right = bisect_left(interval_starts, query_end)
+                row = self.daily._workstation(
+                    setting,
+                    day,
+                    tz,
+                    day_start,
+                    day_end,
+                    samples=all_samples[left:right],
+                    intervals=all_intervals[interval_left:interval_right],
+                    alerts=alerts_by_day[day],
+                )
+                camera_rows.append(row)
+                daily_workstations[day].append(row)
+            workstations.append(self._workstation(setting, camera_rows))
+
+        reports = [
+            {
+                "date": day.isoformat(),
+                "workstations": daily_workstations[day],
+            }
+            for day in days
+        ]
         special_areas = [
             self.daily._special_area(setting, start, end)
             for setting in settings
             if setting["role"] in {"restroom", "dining"}
         ]
+        alerts = _alert_summary(workstations + special_areas)
+        summary = self._summary(workstations)
+        summary.update({
+            "alerts_total": alerts["total"],
+            "missing_alerts": alerts["missing"],
+            "extra_alerts": alerts["extra"],
+        })
 
-        return {
-            "schema_version": 1,
-            "period": "weekly",
-            "week_start": week_start.isoformat(),
-            "week_end": week_end.isoformat(),
+        result = {
+            "schema_version": 2,
+            "period": period_name,
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
             "timezone": timezone_name,
             "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "interpretation": (
@@ -459,8 +592,39 @@ class WeeklyActivityAnalytics:
                 "restroom_by_workstation": "not_attributable",
                 "employee_identity": "not_available",
             },
-            "summary": self._summary(workstations),
+            "summary": summary,
             "daily": self._daily_trend(reports),
             "workstations": workstations,
             "special_areas": special_areas,
         }
+        if period_name == "weekly":
+            result["week_start"] = period_start.isoformat()
+            result["week_end"] = period_end.isoformat()
+        else:
+            result["month_start"] = period_start.isoformat()
+            result["month_end"] = period_end.isoformat()
+        return result
+
+    def weekly_report(self, selected_day):
+        """Genera el reporte consolidado desde el lunes elegido."""
+        if isinstance(selected_day, str):
+            selected_day = date.fromisoformat(selected_day)
+        week_start = selected_day - timedelta(days=selected_day.weekday())
+        return self._period_report(
+            week_start, week_start + timedelta(days=6), "weekly"
+        )
+
+    def monthly_report(self, selected_day):
+        """Genera el reporte consolidado para el mes de la fecha elegida."""
+        if isinstance(selected_day, str):
+            selected_day = date.fromisoformat(selected_day)
+        month_start = selected_day.replace(day=1)
+        if month_start.month == 12:
+            next_month = date(month_start.year + 1, 1, 1)
+        else:
+            next_month = date(
+                month_start.year, month_start.month + 1, 1
+            )
+        return self._period_report(
+            month_start, next_month - timedelta(days=1), "monthly"
+        )

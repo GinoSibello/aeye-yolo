@@ -163,7 +163,7 @@ main {
   border: 1px solid #c9d2cd;
   border-radius: 5px;
   display: inline-grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   padding: 2px;
 }
 
@@ -210,6 +210,12 @@ main {
   background: var(--red-soft);
   border-color: #dfa39e;
   color: #74231e;
+}
+
+.notice.success {
+  background: var(--green-soft);
+  border-color: #9dc9b1;
+  color: var(--green);
 }
 
 .hidden {
@@ -311,6 +317,10 @@ main {
 
 .events-panel {
   grid-column: span 4;
+}
+
+.event-comparison-panel {
+  grid-column: span 12;
 }
 
 .ranking-panel {
@@ -666,7 +676,7 @@ main {
   border: 1px solid var(--line);
   display: grid;
   gap: 1px;
-  grid-template-columns: repeat(8, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
 }
 
 .metric {
@@ -696,7 +706,7 @@ main {
 
 table {
   border-collapse: collapse;
-  min-width: 1250px;
+  min-width: 1340px;
   width: 100%;
 }
 
@@ -916,6 +926,295 @@ td:nth-child(2) {
   padding: 0 clamp(18px, 4vw, 54px) 28px;
 }
 
+.scope-tabs {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  display: flex;
+  gap: 2px;
+  margin: 0 0 14px;
+  overflow-x: auto;
+  padding: 5px;
+  scrollbar-width: thin;
+}
+
+.scope-option {
+  background: transparent;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-weight: 700;
+  min-height: 34px;
+  padding: 5px 12px;
+}
+
+.scope-option:hover {
+  background: var(--surface-soft);
+  color: var(--ink);
+}
+
+.scope-option.active {
+  border-bottom-color: var(--green);
+  color: var(--green);
+}
+
+.comparison-chart {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.comparison-legend,
+.daily-chart-legend {
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 11px;
+  gap: 14px;
+}
+
+.comparison-legend i,
+.daily-chart-legend i {
+  display: inline-block;
+  height: 9px;
+  margin-right: 5px;
+  width: 14px;
+}
+
+.comparison-row {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(110px, 180px) 1fr;
+}
+
+.comparison-row > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comparison-series {
+  display: grid;
+  gap: 4px;
+}
+
+.comparison-series > div {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 34px;
+}
+
+.comparison-track,
+.event-bar-track {
+  background: #e9eeeb;
+  display: block;
+  height: 8px;
+  overflow: hidden;
+}
+
+.comparison-track i,
+.event-bar-track i {
+  display: block;
+  height: 100%;
+}
+
+.late {
+  background: var(--red);
+}
+
+.early {
+  background: var(--amber);
+}
+
+.alerts {
+  background: var(--blue);
+}
+
+.overtime {
+  background: #577b68;
+}
+
+.breaks {
+  background: #7f6aa8;
+}
+
+.comparison-series b {
+  font-size: 11px;
+  text-align: right;
+}
+
+.camera-view {
+  min-width: 0;
+}
+
+.camera-heading {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding: 16px;
+}
+
+.camera-heading h2 {
+  font-size: 20px;
+  margin-bottom: 4px;
+}
+
+.camera-heading p {
+  margin-bottom: 0;
+}
+
+.camera-metrics {
+  margin-bottom: 14px;
+}
+
+.camera-layout {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+
+.camera-layout .section {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.camera-occupancy-panel,
+.camera-daily-panel {
+  grid-column: span 8;
+}
+
+.camera-events-panel,
+.camera-audit-panel {
+  grid-column: span 4;
+}
+
+.hour-values {
+  display: grid;
+  gap: 4px;
+  grid-template-columns: repeat(24, minmax(62px, 1fr));
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.hour-values > div {
+  background: var(--surface-soft);
+  border-top: 3px solid var(--blue);
+  min-height: 58px;
+  padding: 6px;
+}
+
+.hour-values time,
+.hour-values small {
+  color: var(--muted);
+  display: block;
+  font-size: 9px;
+}
+
+.hour-values strong {
+  display: block;
+  font-size: 12px;
+  margin: 3px 0;
+}
+
+.event-bars {
+  display: grid;
+  gap: 13px;
+}
+
+.event-bar-row {
+  display: grid;
+  gap: 5px 8px;
+  grid-template-columns: minmax(105px, 1fr) 2fr 34px;
+}
+
+.event-bar-row > span:first-child {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.event-bar-row strong {
+  font-size: 12px;
+  text-align: right;
+}
+
+.event-bar-row small {
+  color: var(--muted);
+  font-size: 10px;
+  grid-column: 1 / -1;
+}
+
+.daily-event-chart {
+  min-width: 0;
+}
+
+.daily-columns {
+  align-items: end;
+  display: flex;
+  gap: 6px;
+  min-height: 190px;
+  overflow-x: auto;
+  padding: 14px 2px 4px;
+}
+
+.daily-column {
+  display: grid;
+  flex: 1 0 42px;
+  gap: 6px;
+  grid-template-rows: 150px auto;
+  max-width: 64px;
+  min-width: 42px;
+}
+
+.daily-bars {
+  align-items: end;
+  border-bottom: 1px solid var(--line-strong);
+  display: flex;
+  gap: 2px;
+  height: 150px;
+  justify-content: center;
+}
+
+.daily-bars i {
+  display: block;
+  max-width: 10px;
+  min-width: 7px;
+}
+
+.daily-column time {
+  color: var(--muted);
+  font-size: 9px;
+  text-align: center;
+}
+
+.camera-audit {
+  display: grid;
+  margin: 0;
+}
+
+.camera-audit > div {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr auto;
+  padding: 8px 0;
+}
+
+.camera-audit dt {
+  color: var(--muted);
+}
+
+.camera-audit dd {
+  font-weight: 700;
+  margin: 0;
+  text-align: right;
+}
+
 .export-stage {
   background: #fff;
   left: -20000px;
@@ -944,6 +1243,7 @@ td:nth-child(2) {
 
   .trend-panel,
   .events-panel,
+  .event-comparison-panel,
   .ranking-panel,
   .common-panel {
     grid-column: span 6;
@@ -959,6 +1259,13 @@ td:nth-child(2) {
 
   .quality-list {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .camera-occupancy-panel,
+  .camera-events-panel,
+  .camera-daily-panel,
+  .camera-audit-panel {
+    grid-column: span 6;
   }
 }
 
@@ -1008,6 +1315,14 @@ td:nth-child(2) {
 
   .report-panel {
     grid-column: 1 / -1;
+  }
+
+  .camera-layout .section {
+    grid-column: 1 / -1;
+  }
+
+  .comparison-row {
+    grid-template-columns: minmax(90px, 130px) 1fr;
   }
 
   .workstation-gauges {
@@ -1106,8 +1421,10 @@ td:nth-child(2) {
 
   .topbar,
   .filters,
+  .scope-tabs,
   .notice,
   #daily-view,
+  #camera-view,
   .page-footer {
     display: none !important;
   }

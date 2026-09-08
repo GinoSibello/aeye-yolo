@@ -31,6 +31,8 @@
       <div class="period-switch" role="tablist" aria-label="Tipo de reporte">
         <button id="weekly-mode" class="period-option active" type="button"
           role="tab" aria-selected="true">Semanal</button>
+        <button id="monthly-mode" class="period-option" type="button"
+          role="tab" aria-selected="false">Mensual</button>
         <button id="daily-mode" class="period-option" type="button"
           role="tab" aria-selected="false">Diario</button>
       </div>
@@ -42,6 +44,9 @@
 
     <div id="error" class="notice error hidden" role="alert"></div>
     <div id="pending" class="notice warning hidden"></div>
+    <div id="download-status" class="notice success hidden" role="status"></div>
+
+    <nav id="scope-tabs" class="scope-tabs" aria-label="Vista del reporte"></nav>
 
     <section id="weekly-view" aria-labelledby="weekly-title">
       <article id="weekly-sheet" class="weekly-sheet">
@@ -75,7 +80,7 @@
 
           <section class="report-panel trend-panel" aria-labelledby="trend-title">
             <div class="report-panel-heading">
-              <p class="eyebrow">Comportamiento semanal</p>
+              <p id="period-trend-label" class="eyebrow">Comportamiento semanal</p>
               <h3 id="trend-title">Ocupación promedio por hora del día</h3>
             </div>
             <div id="hourly-chart" class="chart-wrap"></div>
@@ -87,6 +92,15 @@
               <h3 id="events-title">Puntualidad y pausas</h3>
             </div>
             <dl id="weekly-events" class="event-grid"></dl>
+          </section>
+
+          <section class="report-panel event-comparison-panel"
+            aria-labelledby="period-comparison-title">
+            <div class="report-panel-heading">
+              <p class="eyebrow">Comparación de puestos</p>
+              <h3 id="period-comparison-title">Llegadas tarde y salidas anticipadas</h3>
+            </div>
+            <div id="period-event-comparison" class="comparison-chart"></div>
           </section>
 
           <section class="report-panel ranking-panel" aria-labelledby="ranking-title">
@@ -130,6 +144,16 @@
         <div id="summary" class="metrics-grid" aria-live="polite"></div>
       </section>
 
+      <section class="section" aria-labelledby="daily-comparison-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Comparación de puestos</p>
+            <h2 id="daily-comparison-title">Llegadas tarde y salidas anticipadas</h2>
+          </div>
+        </div>
+        <div id="daily-event-comparison" class="comparison-chart"></div>
+      </section>
+
       <section class="section" aria-labelledby="workstations-title">
         <div class="section-heading">
           <div>
@@ -144,7 +168,7 @@
                 <th>Puesto</th><th>Horario</th><th>Esperadas</th><th>Promedio</th>
                 <th>Datos</th><th>Dotación completa</th><th>Faltantes</th>
                 <th>Llegadas tarde</th><th>Salida anticipada</th>
-                <th>Después de hora</th><th>Pausas excedidas</th>
+                <th>Después de hora</th><th>Pausas excedidas</th><th>Alertas</th>
               </tr>
             </thead>
             <tbody id="workstations"></tbody>
@@ -185,6 +209,67 @@
         <dl id="quality" class="quality-list"></dl>
       </section>
     </div>
+
+    <section id="camera-view" class="camera-view hidden" aria-labelledby="camera-title">
+      <header class="camera-heading">
+        <div>
+          <p id="camera-role" class="eyebrow">Cámara</p>
+          <h2 id="camera-title">Detalle de cámara</h2>
+          <p id="camera-period" class="muted"></p>
+        </div>
+        <span id="camera-status" class="status pending">Pendiente</span>
+      </header>
+
+      <div id="camera-summary" class="metrics-grid camera-metrics"></div>
+
+      <div class="camera-layout">
+        <section class="section camera-occupancy-panel" aria-labelledby="camera-occupancy-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Distribución horaria</p>
+              <h2 id="camera-occupancy-title">Ocupación por hora</h2>
+            </div>
+          </div>
+          <div id="camera-occupancy-chart" class="chart-wrap"></div>
+          <div id="camera-hour-values" class="hour-values"></div>
+        </section>
+
+        <section class="section camera-events-panel" aria-labelledby="camera-events-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Resumen del período</p>
+              <h2 id="camera-events-title">Puntualidad, salidas y alertas</h2>
+            </div>
+          </div>
+          <div id="camera-events" class="event-bars"></div>
+        </section>
+
+        <section class="section camera-daily-panel" aria-labelledby="camera-daily-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Evolución</p>
+              <h2 id="camera-daily-title">Eventos por día</h2>
+            </div>
+          </div>
+          <div id="camera-daily-events" class="daily-event-chart"></div>
+        </section>
+
+        <section class="section camera-audit-panel" aria-labelledby="camera-audit-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Trazabilidad</p>
+              <h2 id="camera-audit-title">Base de la estimación</h2>
+            </div>
+          </div>
+          <dl id="camera-audit" class="camera-audit"></dl>
+        </section>
+      </div>
+
+      <aside class="report-limitation">
+        Las llegadas y salidas son estimaciones por cupos de ocupación. AEYE no
+        identifica empleados ni puede afirmar qué persona generó cada evento.
+      </aside>
+    </section>
   </main>
 
   <footer class="page-footer">

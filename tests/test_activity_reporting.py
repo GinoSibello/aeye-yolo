@@ -129,6 +129,57 @@ class ActivityReportingTest(unittest.TestCase):
             "not_attributable",
         )
 
+    def test_daily_report_counts_only_emitted_alerts(self):
+        self.record_day()
+        incident = self.repository.start_incident(
+            "cam01", "Corte", "missing",
+            datetime(2026, 8, 10, 9, tzinfo=timezone.utc),
+            2, 2, 1,
+        )
+        self.repository.alert_incident(
+            incident, datetime(2026, 8, 10, 9, 15, tzinfo=timezone.utc)
+        )
+        self.repository.start_incident(
+            "cam01", "Corte", "extra",
+            datetime(2026, 8, 10, 10, tzinfo=timezone.utc),
+            2, 2, 3,
+        )
+
+        report = self.analytics.daily_report("2026-08-10")
+
+        self.assertEqual(report["summary"]["alerts_total"], 1)
+        self.assertEqual(report["summary"]["missing_alerts"], 1)
+        self.assertEqual(report["summary"]["extra_alerts"], 0)
+        self.assertEqual(report["workstations"][0]["alerts"]["total"], 1)
+
+    def test_monthly_report_uses_calendar_boundaries_and_daily_evidence(self):
+        self.record_day()
+        incident = self.repository.start_incident(
+            "cam01", "Corte", "missing",
+            datetime(2026, 8, 10, 9, tzinfo=timezone.utc),
+            2, 2, 1,
+        )
+        self.repository.alert_incident(
+            incident, datetime(2026, 8, 10, 9, 15, tzinfo=timezone.utc)
+        )
+
+        report = WeeklyActivityAnalytics(
+            self.repository
+        ).monthly_report(date(2026, 8, 20))
+        row = report["workstations"][0]
+
+        self.assertEqual(report["period"], "monthly")
+        self.assertEqual(report["month_start"], "2026-08-01")
+        self.assertEqual(report["month_end"], "2026-08-31")
+        self.assertEqual(len(report["daily"]), 31)
+        self.assertEqual(len(row["daily"]), 31)
+        self.assertEqual(len(row["hourly"]), 24)
+        self.assertEqual(row["hourly"][8]["hour"], "08:00")
+        self.assertEqual(row["arrival"]["late_arrivals_estimated"], 1)
+        self.assertEqual(row["alerts"]["total"], 1)
+        self.assertEqual(row["daily"][9]["alerts_total"], 1)
+        self.assertEqual(report["summary"]["alerts_total"], 1)
+
     def test_no_data_reduces_coverage_instead_of_occupancy(self):
         start = datetime(2026, 8, 10, 8, tzinfo=timezone.utc)
         for minute in range(15):

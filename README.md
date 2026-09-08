@@ -23,7 +23,8 @@ TensorRT.
 - ROI por camara y lineas de acceso opcionales para visitas anonimas.
 - Persistencia SQLite de ocupacion, tracks locales, cruces e incidentes.
 - API FastAPI para consultar metricas agregadas.
-- Descarga CSV de reportes por puesto.
+- Reportes diarios, semanales y mensuales con detalle por camara.
+- Descarga CSV diaria y exportacion semanal o mensual a PNG/PDF.
 - Herramienta para medir la latencia del engine TensorRT.
 - Baseline reproducible con latencias por etapa y telemetria de la Jetson.
 
@@ -252,6 +253,7 @@ Rutas de reporte:
 
 - `GET /api/reports/daily?day=AAAA-MM-DD`
 - `GET /api/reports/weekly?week=AAAA-MM-DD`
+- `GET /api/reports/monthly?month=AAAA-MM-DD`
 - `GET /api/reports/daily.csv?day=AAAA-MM-DD`
 - `GET /api/reporting/configuration`
 

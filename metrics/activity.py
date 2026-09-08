@@ -76,12 +76,13 @@ def _period_from_clocks(day, start_text, end_text, tz, anchor=None):
 def build_intervals(rows, start, end, max_gap_seconds):
     """Convierte muestras puntuales en intervalos acotados y verificables."""
     ordered = sorted(rows, key=lambda row: row["sampled_at"])
+    timestamps = [_timestamp(row["sampled_at"]) for row in ordered]
     intervals = []
     max_gap = timedelta(seconds=max_gap_seconds)
     for index, row in enumerate(ordered):
-        sampled_at = _timestamp(row["sampled_at"])
+        sampled_at = timestamps[index]
         next_at = (
-            _timestamp(ordered[index + 1]["sampled_at"])
+            timestamps[index + 1]
             if index + 1 < len(ordered)
             else sampled_at + max_gap
         )
@@ -90,12 +91,25 @@ def build_intervals(rows, start, end, max_gap_seconds):
         if interval_end <= interval_start:
             continue
         valid = row["data_status"] == "valid" and row["people_count"] is not None
+        count = int(row["people_count"]) if valid else None
+        previous = intervals[-1] if intervals else None
+        if (
+            previous
+            and previous["end"] == interval_start
+            and previous["valid"] == valid
+            and previous["count"] == count
+        ):
+            previous["end"] = interval_end
+            previous["seconds"] = (
+                previous["end"] - previous["start"]
+            ).total_seconds()
+            continue
         intervals.append({
             "start": interval_start,
             "end": interval_end,
             "seconds": (interval_end - interval_start).total_seconds(),
             "valid": valid,
-            "count": int(row["people_count"]) if valid else None,
+            "count": count,
         })
     return intervals
 
@@ -455,26 +469,40 @@ class ActivityAnalytics:
         counts.update({row["event_type"]: row["count"] for row in rows})
         return counts
 
+    def _alerts(self, camera_id, start, end):
+        """Cuenta alertas emitidas, distinguiendo faltantes y sobrantes."""
+        rows = self.repository.query(
+            """SELECT kind,COUNT(*) count FROM incidents
+            WHERE camera_id=? AND alerted_at>=? AND alerted_at<?
+            GROUP BY kind""",
+            (camera_id, start.isoformat(), end.isoformat()),
+        )
+        counts = {"total": 0, "missing": 0, "extra": 0}
+        for row in rows:
+            counts[row["kind"]] = row["count"]
+            counts["total"] += row["count"]
+        return counts
+
     def _hourly(self, intervals, day, tz, expected):
         """Resume 24 bandas horarias para la visualizacion."""
-        rows = []
-        for hour in range(24):
-            start = datetime.combine(day, time(hour), tzinfo=tz).astimezone(UTC)
-            end = (datetime.combine(
-                day, time(hour), tzinfo=tz
-            ) + timedelta(hours=1)).astimezone(UTC)
-            aggregate = _aggregate(intervals, start, end, expected)
-            rows.append({
-                "hour": f"{hour:02d}:00",
-                "average_occupancy": aggregate["average_occupancy"],
-                "data_coverage_percent": aggregate["data_coverage_percent"],
-                "staffing_coverage_percent": aggregate[
-                    "staffing_coverage_percent"
-                ],
-            })
-        return rows
+        start = datetime.combine(day, time.min, tzinfo=tz).astimezone(UTC)
+        end = (
+            datetime.combine(day, time.min, tzinfo=tz)
+            + timedelta(days=1)
+        ).astimezone(UTC)
+        return _hourly_profile(intervals, start, end, tz, expected)
 
-    def _workstation(self, setting, day, tz, day_start, day_end):
+    def _workstation(
+        self,
+        setting,
+        day,
+        tz,
+        day_start,
+        day_end,
+        samples=None,
+        intervals=None,
+        alerts=None,
+    ):
         """Calcula ocupacion y eventos estimados de un puesto."""
         expected = setting["expected_people"]
         shift = _shift_period(day, setting, tz)
@@ -489,13 +517,17 @@ class ActivityAnalytics:
                     minutes=setting["overtime_observation_minutes"]
                 ),
             )
-        samples = self._samples(setting["camera_id"], query_start, query_end)
-        intervals = build_intervals(
-            samples,
-            query_start,
-            query_end,
-            setting["max_sample_gap_seconds"],
-        )
+        if samples is None:
+            samples = self._samples(setting["camera_id"], query_start, query_end)
+        if intervals is None:
+            intervals = build_intervals(
+                samples,
+                query_start,
+                query_end,
+                setting["max_sample_gap_seconds"],
+            )
+        else:
+            intervals = _clip(intervals, query_start, query_end)
         report_start, report_end = shift if scheduled else (day_start, day_end)
         aggregate = _aggregate(
             intervals,
@@ -513,6 +545,7 @@ class ActivityAnalytics:
         )
         row = {
             "camera_id": setting["camera_id"],
+            "date": day.isoformat(),
             "name": setting["display_name"],
             "zone": setting["zone"],
             "role": setting["role"],
@@ -521,9 +554,23 @@ class ActivityAnalytics:
             "scheduled": scheduled,
             "shift_start": setting["shift_start"],
             "shift_end": setting["shift_end"],
+            "arrival_grace_minutes": setting["arrival_grace_minutes"],
             "latest_occupancy": latest,
             **aggregate,
+            "occupancy_percent": (
+                _round(_ratio(aggregate["average_occupancy"], expected), 1)
+                if (
+                    scheduled
+                    and expected
+                    and aggregate["average_occupancy"] is not None
+                ) else None
+            ),
             "hourly": self._hourly(intervals, day, tz, expected),
+            "alerts": (
+                alerts if alerts is not None else self._alerts(
+                    setting["camera_id"], day_start, day_end
+                )
+            ),
         }
         if not scheduled or expected is None:
             row.update({
@@ -596,6 +643,7 @@ class ActivityAnalytics:
         access = self._access_counts(
             setting["camera_id"], day_start, day_end
         )
+        tz = ZoneInfo(setting["timezone"])
         return {
             "camera_id": setting["camera_id"],
             "name": setting["display_name"],
@@ -627,9 +675,15 @@ class ActivityAnalytics:
                 if setting["access_line"].get("enabled")
                 else "access_line_pending"
             ),
+            "hourly": _hourly_profile(
+                intervals, day_start, day_end, tz
+            ),
+            "alerts": self._alerts(
+                setting["camera_id"], day_start, day_end
+            ),
         }
 
-    def daily_report(self, selected_day):
+    def daily_report(self, selected_day, include_special_areas=True):
         """Genera el reporte consolidado para una fecha local."""
         if isinstance(selected_day, str):
             selected_day = date.fromisoformat(selected_day)
@@ -654,7 +708,10 @@ class ActivityAnalytics:
                 workstations.append(self._workstation(
                     setting, selected_day, tz, day_start, day_end
                 ))
-            elif setting["role"] in {"restroom", "dining"}:
+            elif (
+                include_special_areas
+                and setting["role"] in {"restroom", "dining"}
+            ):
                 special_areas.append(self._special_area(
                     setting, day_start, day_end
                 ))
@@ -696,6 +753,10 @@ class ActivityAnalytics:
             * (row["arrival"].get("late_arrivals_estimated") or 0)
             for row in scheduled
         )
+        alerts = {
+            key: sum(row["alerts"][key] for row in workstations + special_areas)
+            for key in ("total", "missing", "extra")
+        }
         summary = {
             "workstations": len(workstations),
             "configured_workstations": sum(
@@ -755,6 +816,9 @@ class ActivityAnalytics:
                 )
                 if meals_ready else None
             ),
+            "alerts_total": alerts["total"],
+            "missing_alerts": alerts["missing"],
+            "extra_alerts": alerts["extra"],
         }
         return {
             "schema_version": 1,
@@ -769,3 +833,73 @@ class ActivityAnalytics:
             "workstations": workstations,
             "special_areas": special_areas,
         }
+
+
+def _hourly_profile(intervals, start, end, tz, expected=None):
+    """Agrupa un rango por hora local en una sola pasada por intervalo."""
+    totals = [{
+        "period": 0.0,
+        "valid": 0.0,
+        "person": 0.0,
+        "complete": 0.0,
+    } for _ in range(24)]
+
+    first_day = start.astimezone(tz).date()
+    last_day = (end - timedelta(microseconds=1)).astimezone(tz).date()
+    current_day = first_day
+    while current_day <= last_day:
+        for hour in range(24):
+            local_start = datetime.combine(
+                current_day, time(hour), tzinfo=tz
+            )
+            bucket_start = max(start, local_start.astimezone(UTC))
+            bucket_end = min(
+                end, (local_start + timedelta(hours=1)).astimezone(UTC)
+            )
+            if bucket_end > bucket_start:
+                totals[hour]["period"] += (
+                    bucket_end - bucket_start
+                ).total_seconds()
+        current_day += timedelta(days=1)
+
+    for interval in _clip(intervals, start, end):
+        cursor = interval["start"]
+        while cursor < interval["end"]:
+            local = cursor.astimezone(tz)
+            next_hour = (
+                local.replace(minute=0, second=0, microsecond=0)
+                + timedelta(hours=1)
+            ).astimezone(UTC)
+            segment_end = min(interval["end"], next_hour)
+            seconds = (segment_end - cursor).total_seconds()
+            bucket = totals[local.hour]
+            if interval["valid"]:
+                bucket["valid"] += seconds
+                bucket["person"] += seconds * interval["count"]
+                if expected is not None and interval["count"] >= expected:
+                    bucket["complete"] += seconds
+            cursor = segment_end
+
+    rows = []
+    for hour, bucket in enumerate(totals):
+        average = (
+            bucket["person"] / bucket["valid"]
+            if bucket["valid"] else None
+        )
+        rows.append({
+            "hour": f"{hour:02d}:00",
+            "average_occupancy": _round(average),
+            "occupancy_percent": (
+                _round(_ratio(average, expected), 1)
+                if average is not None and expected else None
+            ),
+            "data_coverage_percent": _round(
+                _ratio(bucket["valid"], bucket["period"]), 1
+            ),
+            "staffing_coverage_percent": (
+                _round(_ratio(bucket["complete"], bucket["valid"]), 1)
+                if expected is not None and bucket["valid"] else None
+            ),
+            "sample_weight_hours": _round(bucket["valid"] / 3600.0),
+        })
+    return rows

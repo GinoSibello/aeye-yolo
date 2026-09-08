@@ -15,7 +15,10 @@ El sistema ya puede:
 - estimar pausas iniciadas durante la ventana de comida y sus excesos;
 - registrar tracks locales y temporales en bano y comedor;
 - medir entradas, salidas y duraciones anonimas con una linea de acceso;
-- consultar un dia desde el dashboard y descargar una fila por puesto en CSV.
+- consultar reportes diarios, semanales y mensuales desde el dashboard;
+- comparar llegadas tarde, salidas anticipadas y alertas por puesto;
+- abrir una subpestana por camara con ocupacion horaria y evidencia diaria;
+- descargar el reporte diario en CSV y el semanal o mensual como PNG o PDF.
 
 La camara 7 esta configurada como `restroom` y la 8 como `dining`. Sus
 lineas de acceso quedan desactivadas hasta dibujarlas sobre una imagen real.
@@ -119,6 +122,18 @@ el sistema razona sobre "cupo 1" y "cupo 2" segun el conteo, sin saber quien
 es quien. Por eso estas metricas sirven para operacion agregada, no para
 sanciones individuales.
 
+Si a las `08:00` se esperan tres personas y el conteo es uno, existen dos cupos
+sin cubrir. Esos cupos se consideran llegadas tarde solo si siguen ausentes al
+terminar `arrival_grace_minutes` (cinco minutos en la configuracion actual) y
+hay al menos 80 % de cobertura en la ventana inicial de 15 minutos. Cuando el
+conteo alcanza dos y luego tres, se registra la demora estimada de cada cupo.
+Una oclusion, una ROI incorrecta o una persona fuera de su puesto pueden parecer
+una demora; por eso no equivale a una marcacion de ingreso.
+
+Las **alertas emitidas** son incidentes de dotacion que superaron el tiempo de
+confirmacion y alcanzaron `alert_after_seconds`. No son todas las variaciones
+de ocupacion ni son lo mismo que las llegadas tarde estimadas.
+
 Los intervalos `no_data` reducen la cobertura y nunca se convierten en cero
 personas. Si falta configuracion o evidencia suficiente, la API devuelve
 `null` y el dashboard muestra `Pendiente` o `Sin datos`.
@@ -131,12 +146,19 @@ personas. Si falta configuracion o evidencia suficiente, la API devuelve
 - OpenAPI: `http://IP_DE_LA_JETSON:8000/docs`
 - Reporte JSON: `GET /api/reports/daily?day=AAAA-MM-DD`
 - Reporte semanal JSON: `GET /api/reports/weekly?week=AAAA-MM-DD`
+- Reporte mensual JSON: `GET /api/reports/monthly?month=AAAA-MM-DD`
 - Descarga CSV: `GET /api/reports/daily.csv?day=AAAA-MM-DD`
 - Configuracion efectiva: `GET /api/reporting/configuration`
 
-La vista semanal toma de lunes a domingo y permite descargar una imagen PNG.
-El boton `Guardar PDF` abre la impresion del navegador con una hoja A4
-horizontal; seleccionar `Guardar como PDF` genera el archivo para jefatura.
+La vista semanal toma de lunes a domingo y la mensual usa el mes calendario.
+Cada periodo ofrece una subpestana `General` y una por camara. En un puesto se
+muestran ocupacion por hora con su porcentaje exacto, puntualidad, salidas,
+pausas, alertas y evolucion diaria. En bano y comedor no se muestran eventos
+laborales de llegada porque no existe una dotacion de puesto atribuible.
+
+Las vistas semanal y mensual permiten descargar una imagen PNG. El boton
+`Guardar PDF` abre la impresion del navegador con una hoja A4 horizontal;
+seleccionar `Guardar como PDF` genera el archivo para jefatura.
 
 Por decision de esta instalacion, el puerto 8000 no usa usuario ni contrasena:
 cualquier equipo de la red local puede ver los reportes. No debe publicarse en
@@ -157,4 +179,3 @@ AEYE no puede afirmar quien llego tarde, quien fue al bano ni si una ausencia
 esta justificada. Tampoco vincula por ahora un faltante de un puesto con una
 entrada al bano o al comedor. Esas inferencias quedaron explicitamente fuera de
 este MVP.
-
