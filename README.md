@@ -9,6 +9,12 @@ TensorRT.
 > locales y temporales. No identifican empleados ni se conservan entre camaras
 > o reinicios.
 
+## Trabajo con agentes de IA
+
+La [guia de agentes y skills](AGENT_WORKFLOW.md) explica como usar Codex y
+OpenCode con instrucciones por area, especialistas y revision independiente.
+El mapa para agentes esta en [AGENTS.md](AGENTS.md); no cambia el runtime.
+
 ## Funcionalidades
 
 - Lectura concurrente de multiples camaras RTSP.
