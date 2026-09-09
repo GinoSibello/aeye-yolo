@@ -86,6 +86,7 @@ class AnalyticsTest(unittest.TestCase):
                 "002_data_quality.sql",
                 "003_activity_reporting.sql",
                 "004_activity_query_indexes.sql",
+                "005_multiple_work_shifts.sql",
             ],
         )
         reopened.close()

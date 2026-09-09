@@ -179,7 +179,10 @@ def daily_report_csv(day: date = Query(default_factory=date.today)):
             "puesto": row["name"],
             "zona": row["zone"],
             "estado_configuracion": row["configuration_status"],
-            "horario": (
+            "horario": " | ".join(
+                f"{shift['name']}: {shift['start']}-{shift['end']}"
+                for shift in row.get("shifts", [])
+            ) or (
                 f"{row['shift_start']}-{row['shift_end']}"
                 if row["shift_start"] and row["shift_end"] else ""
             ),

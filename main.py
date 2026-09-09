@@ -17,6 +17,7 @@ from metrics.performance import PerformanceMonitor
 from metrics.recorder import MetricsRecorder
 from metrics.reporting_config import (
     prepare_cameras,
+    staffing_active,
     sync_reporting_configuration,
 )
 from metrics.staffing import StaffingStateMachine
@@ -731,7 +732,10 @@ def main():
                 boxes = [track.box for track in tracks]
                 ids = [track.track_id for track in tracks]
                 raw_count = len(tracks)
-                observation = rules[cam_id].evaluate(raw_count)
+                observation = rules[cam_id].evaluate(
+                    raw_count,
+                    monitoring=staffing_active(reporting_by_id[cam_id]),
+                )
                 count = observation.smoothed_count
                 rule_state = observation.rule_state
                 result_ready = time.monotonic()

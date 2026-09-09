@@ -218,6 +218,7 @@ class WeeklyActivityAnalytics:
             "expected_people": expected,
             "shift_start": setting["shift_start"],
             "shift_end": setting["shift_end"],
+            "shifts": setting["shifts"],
             "arrival_grace_minutes": setting["arrival_grace_minutes"],
             "period_basis": period_basis,
             "scheduled_days": len(scheduled),

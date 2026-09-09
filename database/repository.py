@@ -92,14 +92,15 @@ class Repository:
             overtime_observation_minutes,meal_window_start,meal_window_end,
             meal_allowed_minutes,max_sample_gap_seconds,absence_merge_gap_minutes,
             track_session_gap_seconds,roi_json,access_line_json,
-            configuration_status,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            configuration_status,updated_at,shifts_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(camera_id) DO UPDATE SET
             display_name=excluded.display_name,zone=excluded.zone,role=excluded.role,
             reporting_enabled=excluded.reporting_enabled,
             expected_people=excluded.expected_people,timezone=excluded.timezone,
             workdays_json=excluded.workdays_json,shift_start=excluded.shift_start,
             shift_end=excluded.shift_end,
+            shifts_json=excluded.shifts_json,
             arrival_grace_minutes=excluded.arrival_grace_minutes,
             early_departure_tolerance_minutes=excluded.early_departure_tolerance_minutes,
             overtime_tolerance_minutes=excluded.overtime_tolerance_minutes,
@@ -128,7 +129,7 @@ class Repository:
                 settings["absence_merge_gap_minutes"],
                 settings["track_session_gap_seconds"], settings["roi_json"],
                 settings["access_line_json"], settings["configuration_status"],
-                _iso(settings["updated_at"]),
+                _iso(settings["updated_at"]), settings["shifts_json"],
             ),
         )
 
@@ -138,7 +139,8 @@ class Repository:
         return self.query(
             f"""SELECT * FROM workplace_settings {where}
             ORDER BY CASE role WHEN 'workstation' THEN 0 WHEN 'restroom' THEN 1
-            WHEN 'dining' THEN 2 ELSE 3 END, camera_id"""
+            WHEN 'dining' THEN 2 ELSE 3 END,
+            display_name COLLATE NOCASE, camera_id"""
         )
 
     def add_occupancy(

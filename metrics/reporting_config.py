@@ -2,7 +2,7 @@
 
 import json
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 
@@ -56,6 +56,61 @@ def _points(value, field, minimum):
     return normalized
 
 
+def _shifts(source):
+    """Normaliza uno o varios turnos conservando el formato anterior."""
+    default_shift = source.get("shift", {})
+    default_meal = source.get("meal", {})
+    raw = source.get("shifts")
+    if raw is None:
+        if not default_shift.get("start") and not default_shift.get("end"):
+            return []
+        raw = [{
+            "id": "default",
+            "name": "Turno",
+            "start": default_shift.get("start"),
+            "end": default_shift.get("end"),
+            "meal": default_meal,
+        }]
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("reporting.shifts debe contener al menos un turno")
+
+    result = []
+    identifiers = set()
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError("Cada turno debe ser un objeto")
+        identifier = str(item.get("id") or f"shift_{index + 1}")
+        if identifier in identifiers:
+            raise ValueError(f"Turno duplicado: {identifier}")
+        identifiers.add(identifier)
+        start = _clock(item.get("start"), f"shifts.{identifier}.start")
+        end = _clock(item.get("end"), f"shifts.{identifier}.end")
+        if not start or not end:
+            raise ValueError(f"El turno {identifier} requiere inicio y fin")
+        meal = item.get("meal", default_meal) or {}
+        allowed = meal.get("allowed_minutes")
+        result.append({
+            "id": identifier,
+            "name": str(item.get("name") or f"Turno {index + 1}"),
+            "start": start,
+            "end": end,
+            "meal_window_start": _clock(
+                meal.get("window_start"),
+                f"shifts.{identifier}.meal.window_start",
+            ),
+            "meal_window_end": _clock(
+                meal.get("window_end"),
+                f"shifts.{identifier}.meal.window_end",
+            ),
+            "meal_allowed_minutes": (
+                None if allowed in (None, "") else _nonnegative(
+                    allowed, f"shifts.{identifier}.meal.allowed_minutes", 0
+                )
+            ),
+        })
+    return result
+
+
 def normalize_reporting(config):
     """Devuelve opciones globales validas con horarios aun configurables."""
     source = deepcopy(config.get("reporting", {}))
@@ -66,12 +121,14 @@ def normalize_reporting(config):
         raise ValueError(f"Zona horaria invalida: {timezone}") from error
     shift = source.get("shift", {})
     meal = source.get("meal", {})
+    shifts = _shifts(source)
     return {
         "enabled": bool(source.get("enabled", True)),
         "timezone": timezone,
         "workdays": _workdays(source.get("workdays")),
-        "shift_start": _clock(shift.get("start"), "reporting.shift.start"),
-        "shift_end": _clock(shift.get("end"), "reporting.shift.end"),
+        "shift_start": shifts[0]["start"] if shifts else None,
+        "shift_end": shifts[-1]["end"] if shifts else None,
+        "shifts": shifts,
         "arrival_grace_minutes": _nonnegative(
             shift.get("arrival_grace_minutes"), "arrival_grace_minutes", 5
         ),
@@ -147,6 +204,10 @@ def camera_reporting(camera, global_settings):
     settings = dict(global_settings)
     shift = override.get("shift", {})
     meal = override.get("meal", {})
+    if "shifts" in override:
+        settings["shifts"] = _shifts(override)
+        settings["shift_start"] = settings["shifts"][0]["start"]
+        settings["shift_end"] = settings["shifts"][-1]["end"]
     for key, value in {
         "shift_start": _clock(shift.get("start"), f"{camera['id']}.shift.start"),
         "shift_end": _clock(shift.get("end"), f"{camera['id']}.shift.end"),
@@ -209,22 +270,24 @@ def camera_reporting(camera, global_settings):
     if role == "workstation":
         if expected is None:
             missing.append("expected_people")
-        if not settings["shift_start"] or not settings["shift_end"]:
+        if not settings["shifts"]:
             missing.append("shift")
     if role in {"restroom", "dining"} and not access["enabled"]:
         missing.append("access_line")
-    if role == "workstation" and (
-        not settings["meal_window_start"]
-        or not settings["meal_window_end"]
-        or settings["meal_allowed_minutes"] is None
-    ):
+    has_meal = any(
+        shift.get("meal_window_start")
+        and shift.get("meal_window_end")
+        and shift.get("meal_allowed_minutes") is not None
+        for shift in settings["shifts"]
+    )
+    if role == "workstation" and not has_meal:
         missing.append("meal")
     if not reporting_enabled:
         status = "pending"
     elif not missing:
         status = "ready"
     elif role == "workstation" and (
-        expected is None or not settings["shift_start"] or not settings["shift_end"]
+        expected is None or not settings["shifts"]
     ):
         status = "pending"
     else:
@@ -258,6 +321,36 @@ def prepare_cameras(config):
     return rows
 
 
+def staffing_active(settings, at=None):
+    """Indica si una regla de dotacion debe vigilarse en este instante."""
+    if settings["role"] != "workstation" or not settings.get("shifts"):
+        return False
+    current = at or datetime.now().astimezone()
+    local = current.astimezone(ZoneInfo(settings["timezone"]))
+    for offset in (0, -1):
+        workday = local.date() + timedelta(days=offset)
+        if workday.weekday() not in settings["workdays"]:
+            continue
+        for shift in settings["shifts"]:
+            start_hour, start_minute = (
+                int(part) for part in shift["start"].split(":", 1)
+            )
+            end_hour, end_minute = (
+                int(part) for part in shift["end"].split(":", 1)
+            )
+            start = datetime.combine(
+                workday, time(start_hour, start_minute), local.tzinfo
+            )
+            end = datetime.combine(
+                workday, time(end_hour, end_minute), local.tzinfo
+            )
+            if end <= start:
+                end += timedelta(days=1)
+            if start <= local < end:
+                return True
+    return False
+
+
 def sync_reporting_configuration(repository, config, at=None):
     """Materializa configuracion para que la API no dependa del proceso de vision."""
     now = at or datetime.now().astimezone()
@@ -269,6 +362,7 @@ def sync_reporting_configuration(repository, config, at=None):
             "workdays_json": json.dumps(row["workdays"]),
             "roi_json": json.dumps(row["roi"]),
             "access_line_json": json.dumps(row["access_line"]),
+            "shifts_json": json.dumps(row["shifts"]),
             "updated_at": now,
         })
     return rows

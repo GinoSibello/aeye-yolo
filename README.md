@@ -125,7 +125,7 @@ La configuracion se divide en seis secciones:
 | `preview` | Visor local, puerto y calidad JPEG |
 | `alerts` | Salida por consola o webhook |
 | `database` | Activacion y ruta de SQLite |
-| `reporting` | Zona horaria, turno, comida y tolerancias |
+| `reporting` | Zona horaria, turnos, comida y tolerancias |
 | `cameras` | Conexion y regla de cada camara |
 
 Campos principales de cada camara:
@@ -138,10 +138,10 @@ Campos principales de cada camara:
 | `zone` | Nombre operativo usado en metricas |
 | `role` | `workstation`, `restroom`, `dining` u `other` |
 | `reporting_enabled` | Guarda muestras para reportes |
-| `expected_people` | Dotacion fija del puesto |
+| `expected_people` | Dotacion simultanea esperada en cada turno |
 | `roi` | Poligono normalizado que delimita la zona |
 | `access_line` | Linea opcional de entrada/salida |
-| `monitor_staffing` | Evalua dotacion y genera incidentes |
+| `monitor_staffing` | Evalua dotacion dentro del horario y genera incidentes |
 | `min_people`, `max_people` | Rango esperado en la zona |
 
 Variables de entorno admitidas:

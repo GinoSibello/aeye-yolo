@@ -48,15 +48,42 @@ def _clock(day, value, tz):
     return datetime.combine(day, time(hour, minute), tzinfo=tz)
 
 
+def _shift_periods(day, settings, tz):
+    """Construye todos los turnos locales y admite cruces de medianoche."""
+    definitions = settings.get("shifts") or []
+    if not definitions and settings.get("shift_start") and settings.get("shift_end"):
+        definitions = [{
+            "id": "default",
+            "name": "Turno",
+            "start": settings["shift_start"],
+            "end": settings["shift_end"],
+            "meal_window_start": settings.get("meal_window_start"),
+            "meal_window_end": settings.get("meal_window_end"),
+            "meal_allowed_minutes": settings.get("meal_allowed_minutes"),
+        }]
+    periods = []
+    for definition in definitions:
+        start = _clock(day, definition["start"], tz)
+        end = _clock(day, definition["end"], tz)
+        if end <= start:
+            end += timedelta(days=1)
+        periods.append({
+            **definition,
+            "start_at": start.astimezone(UTC),
+            "end_at": end.astimezone(UTC),
+        })
+    return periods
+
+
 def _shift_period(day, settings, tz):
-    """Construye un turno y admite salida al dia siguiente."""
-    if not settings.get("shift_start") or not settings.get("shift_end"):
+    """Devuelve el rango que contiene todos los turnos configurados."""
+    periods = _shift_periods(day, settings, tz)
+    if not periods:
         return None
-    start = _clock(day, settings["shift_start"], tz)
-    end = _clock(day, settings["shift_end"], tz)
-    if end <= start:
-        end += timedelta(days=1)
-    return start.astimezone(UTC), end.astimezone(UTC)
+    return (
+        min(period["start_at"] for period in periods),
+        max(period["end_at"] for period in periods),
+    )
 
 
 def _period_from_clocks(day, start_text, end_text, tz, anchor=None):
@@ -393,6 +420,28 @@ def _meal_metrics(
     }
 
 
+def _combine_measurements(items, status_key, count_key, average_key):
+    """Combina eventos por turno sin ocultar ventanas sin evidencia."""
+    configured = [
+        item for item in items if item.get(status_key) != "not_configured"
+    ]
+    estimated = [
+        item for item in configured if item.get(status_key) == "estimated"
+    ]
+    if not configured:
+        return "not_configured", None, None
+    if not estimated:
+        return "insufficient_data", None, None
+    count = sum(item.get(count_key) or 0 for item in estimated)
+    weighted_minutes = sum(
+        (item.get(average_key) or 0) * (item.get(count_key) or 0)
+        for item in estimated
+    )
+    status = "estimated" if len(estimated) == len(configured) else "partial"
+    average = _round(weighted_minutes / count if count else 0.0)
+    return status, count, average
+
+
 def _visible_sessions(rows, maximum_gap_seconds):
     """Agrupa tracks locales por ejecucion sin tratarlos como personas unicas."""
     grouped = {}
@@ -420,6 +469,7 @@ def _setting(row):
     result["workdays"] = json.loads(result.pop("workdays_json"))
     result["roi"] = json.loads(result.pop("roi_json"))
     result["access_line"] = json.loads(result.pop("access_line_json"))
+    result["shifts"] = json.loads(result.pop("shifts_json", "[]") or "[]")
     result["reporting_enabled"] = bool(result["reporting_enabled"])
     return result
 
@@ -505,8 +555,9 @@ class ActivityAnalytics:
     ):
         """Calcula ocupacion y eventos estimados de un puesto."""
         expected = setting["expected_people"]
+        shift_periods = _shift_periods(day, setting, tz)
         shift = _shift_period(day, setting, tz)
-        scheduled = day.weekday() in setting["workdays"] and shift is not None
+        scheduled = day.weekday() in setting["workdays"] and bool(shift_periods)
         query_start = day_start
         query_end = day_end
         if shift:
@@ -554,6 +605,12 @@ class ActivityAnalytics:
             "scheduled": scheduled,
             "shift_start": setting["shift_start"],
             "shift_end": setting["shift_end"],
+            "shifts": [{
+                "id": period["id"],
+                "name": period["name"],
+                "start": period["start"],
+                "end": period["end"],
+            } for period in shift_periods],
             "arrival_grace_minutes": setting["arrival_grace_minutes"],
             "latest_occupancy": latest,
             **aggregate,
@@ -583,39 +640,107 @@ class ActivityAnalytics:
             })
             return row
 
-        row["arrival"] = _arrival_metrics(
-            intervals,
-            report_start,
-            report_end,
-            expected,
-            setting["arrival_grace_minutes"],
+        shift_rows = []
+        for index, period in enumerate(shift_periods):
+            arrival = _arrival_metrics(
+                intervals,
+                period["start_at"],
+                period["end_at"],
+                expected,
+                setting["arrival_grace_minutes"],
+            )
+            departure = _departure_metrics(
+                intervals,
+                period["start_at"],
+                period["end_at"],
+                expected,
+                setting["early_departure_tolerance_minutes"],
+                setting["overtime_tolerance_minutes"],
+                setting["overtime_observation_minutes"],
+            )
+            if index < len(shift_periods) - 1:
+                departure.update({
+                    "overtime_status": "not_configured",
+                    "overtime_departures_estimated": None,
+                    "average_overtime_minutes": None,
+                    "maximum_overtime_minutes": None,
+                })
+            meal = _period_from_clocks(
+                day,
+                period.get("meal_window_start"),
+                period.get("meal_window_end"),
+                tz,
+                period["start_at"],
+            )
+            meal_metrics = _meal_metrics(
+                intervals,
+                period["start_at"],
+                period["end_at"],
+                meal[0] if meal else None,
+                meal[1] if meal else None,
+                expected,
+                period.get("meal_allowed_minutes"),
+                setting["absence_merge_gap_minutes"],
+            )
+            shift_rows.append({
+                "id": period["id"],
+                "name": period["name"],
+                "start": period["start"],
+                "end": period["end"],
+                "arrival": arrival,
+                "departure": departure,
+                "meal": meal_metrics,
+            })
+
+        arrival_status, late_count, average_late = _combine_measurements(
+            [shift_row["arrival"] for shift_row in shift_rows],
+            "status", "late_arrivals_estimated", "average_late_minutes",
         )
-        row["departure"] = _departure_metrics(
-            intervals,
-            report_start,
-            report_end,
-            expected,
-            setting["early_departure_tolerance_minutes"],
-            setting["overtime_tolerance_minutes"],
-            setting["overtime_observation_minutes"],
+        early_status, early_count, average_early = _combine_measurements(
+            [shift_row["departure"] for shift_row in shift_rows],
+            "early_departures_status", "early_departures_estimated",
+            "average_early_minutes",
         )
-        meal = _period_from_clocks(
-            day,
-            setting["meal_window_start"],
-            setting["meal_window_end"],
-            tz,
-            report_start,
+        overtime_status, overtime_count, average_overtime = (
+            _combine_measurements(
+                [shift_row["departure"] for shift_row in shift_rows],
+                "overtime_status", "overtime_departures_estimated",
+                "average_overtime_minutes",
+            )
         )
-        row["meal"] = _meal_metrics(
-            intervals,
-            report_start,
-            report_end,
-            meal[0] if meal else None,
-            meal[1] if meal else None,
-            expected,
-            setting["meal_allowed_minutes"],
-            setting["absence_merge_gap_minutes"],
+        meal_status, breaks, average_break = _combine_measurements(
+            [shift_row["meal"] for shift_row in shift_rows],
+            "status", "breaks_estimated", "average_break_minutes",
         )
+        row["shifts"] = shift_rows
+        row["arrival"] = {
+            "status": arrival_status,
+            "late_arrivals_estimated": late_count,
+            "average_late_minutes": average_late,
+            "absent_slots": sum(
+                shift_row["arrival"].get("absent_slots") or 0
+                for shift_row in shift_rows
+                if shift_row["arrival"].get("status") == "estimated"
+            ),
+        }
+        row["departure"] = {
+            "early_departures_status": early_status,
+            "early_departures_estimated": early_count,
+            "average_early_minutes": average_early,
+            "overtime_status": overtime_status,
+            "overtime_departures_estimated": overtime_count,
+            "average_overtime_minutes": average_overtime,
+        }
+        row["meal"] = {
+            "status": meal_status,
+            "breaks_estimated": breaks,
+            "overruns_estimated": sum(
+                shift_row["meal"].get("overruns_estimated") or 0
+                for shift_row in shift_rows
+                if shift_row["meal"].get("status") == "estimated"
+            ) if meal_status in {"estimated", "partial"} else None,
+            "average_break_minutes": average_break,
+        }
         return row
 
     def _special_area(self, setting, day_start, day_end):

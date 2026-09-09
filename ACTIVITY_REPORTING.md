@@ -25,9 +25,9 @@ lineas de acceso quedan desactivadas hasta dibujarlas sobre una imagen real.
 Mientras tanto se guardan ocupacion y tracks visibles, pero no se presenta una
 duracion de visita como si fuera fiable.
 
-## Configuracion pendiente
+## Configuracion de turnos
 
-Editar el bloque `reporting` de `cameras.json`:
+Esta instalacion usa dos turnos de lunes a viernes:
 
 ```json
 "reporting": {
@@ -35,24 +35,42 @@ Editar el bloque `reporting` de `cameras.json`:
   "timezone": "America/Argentina/Buenos_Aires",
   "workdays": [0, 1, 2, 3, 4],
   "shift": {
-    "start": "08:00",
-    "end": "17:00",
     "arrival_grace_minutes": 5,
     "early_departure_tolerance_minutes": 5,
     "overtime_tolerance_minutes": 10,
     "overtime_observation_minutes": 180
   },
-  "meal": {
-    "window_start": "12:00",
-    "window_end": "14:00",
-    "allowed_minutes": 30
-  }
+  "shifts": [
+    {
+      "id": "morning",
+      "name": "Turno mañana",
+      "start": "07:00",
+      "end": "16:00",
+      "meal": {
+        "window_start": "12:30",
+        "window_end": "13:00",
+        "allowed_minutes": 30
+      }
+    },
+    {
+      "id": "afternoon",
+      "name": "Turno tarde",
+      "start": "16:00",
+      "end": "00:00",
+      "meal": {}
+    }
+  ]
 }
 ```
 
 Los dias usan lunes `0` a domingo `6`. Los horarios son locales y usan
 `HH:MM`. Un turno cuya salida es anterior al inicio se interpreta como un
-turno que cruza medianoche.
+turno que cruza medianoche. El almuerzo esta asociado solamente al turno
+manana; no se estima una pausa del turno tarde porque no fue informada.
+
+Los puestos se ordenan por nombre operativo: Montaje 1, Montaje 2, Montaje 3,
+Montaje 4, Montaje 5 y Portico 2. Las camaras fisicas asociadas son 1, 2, 5,
+4, 3 y 6 respectivamente.
 
 En cada puesto, completar el nombre, zona y cantidad fija:
 
@@ -69,9 +87,11 @@ En cada puesto, completar el nombre, zona y cantidad fija:
 }
 ```
 
-Cuando `expected_people` sea conocido, `monitor_staffing` puede quedar en
-`true` para generar incidentes. Los puestos sin cantidad confirmada siguen
-registrando ocupacion, pero no generan alertas ni metricas de cumplimiento.
+En las camaras 1 a 6, `expected_people: 2` significa dos personas simultaneas
+por turno. El sistema evalua por separado hasta dos llegadas a las 07:00 y
+otras dos a las 16:00. `monitor_staffing` solo genera incidentes durante los
+turnos y se suspende de 00:00 a 07:00 y en dias no laborables. Bano y comedor
+no tienen dotacion esperada ni generan alertas de personal.
 
 La ROI usa coordenadas normalizadas entre 0 y 1. AEYE cuenta un track cuando el
 centro inferior de su caja esta dentro del poligono. La ROI inicial cubre toda
@@ -122,7 +142,7 @@ el sistema razona sobre "cupo 1" y "cupo 2" segun el conteo, sin saber quien
 es quien. Por eso estas metricas sirven para operacion agregada, no para
 sanciones individuales.
 
-Si a las `08:00` se esperan tres personas y el conteo es uno, existen dos cupos
+Si al comenzar un turno se esperan tres personas y el conteo es uno, existen dos cupos
 sin cubrir. Esos cupos se consideran llegadas tarde solo si siguen ausentes al
 terminar `arrival_grace_minutes` (cinco minutos en la configuracion actual) y
 hay al menos 80 % de cobertura en la ventana inicial de 15 minutos. Cuando el
@@ -130,9 +150,15 @@ conteo alcanza dos y luego tres, se registra la demora estimada de cada cupo.
 Una oclusion, una ROI incorrecta o una persona fuera de su puesto pueden parecer
 una demora; por eso no equivale a una marcacion de ingreso.
 
+En el relevo de las 16:00, si salen dos personas y entran otras dos sin cambiar
+el conteo, AEYE solo puede afirmar que el turno tarde comenzo con dos cupos
+cubiertos. Sin identificacion o control de acceso no puede demostrar que las
+personas efectivamente cambiaron.
+
 Las **alertas emitidas** son incidentes de dotacion que superaron el tiempo de
 confirmacion y alcanzaron `alert_after_seconds`. No son todas las variaciones
-de ocupacion ni son lo mismo que las llegadas tarde estimadas.
+de ocupacion ni son lo mismo que las llegadas tarde estimadas. Fuera de los
+turnos no se abren alertas de faltantes.
 
 Los intervalos `no_data` reducen la cobertura y nunca se convierten en cero
 personas. Si falta configuracion o evidencia suficiente, la API devuelve

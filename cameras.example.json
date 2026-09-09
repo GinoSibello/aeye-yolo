@@ -56,18 +56,31 @@
     "timezone": "America/Argentina/Buenos_Aires",
     "workdays": [0, 1, 2, 3, 4],
     "shift": {
-      "start": null,
-      "end": null,
       "arrival_grace_minutes": 5,
       "early_departure_tolerance_minutes": 5,
       "overtime_tolerance_minutes": 10,
       "overtime_observation_minutes": 180
     },
-    "meal": {
-      "window_start": null,
-      "window_end": null,
-      "allowed_minutes": null
-    },
+    "shifts": [
+      {
+        "id": "morning",
+        "name": "Turno mañana",
+        "start": "07:00",
+        "end": "16:00",
+        "meal": {
+          "window_start": "12:30",
+          "window_end": "13:00",
+          "allowed_minutes": 30
+        }
+      },
+      {
+        "id": "afternoon",
+        "name": "Turno tarde",
+        "start": "16:00",
+        "end": "00:00",
+        "meal": {}
+      }
+    ],
     "max_sample_gap_seconds": 15,
     "absence_merge_gap_minutes": 2,
     "track_session_gap_seconds": 15
@@ -75,8 +88,8 @@
   "cameras": [
     {
       "id": "cam01",
-      "name": "Camara 01",
-      "zone": "Zona 01",
+      "name": "Montaje 1",
+      "zone": "Montaje 1",
       "enabled": true,
       "ip": "192.0.2.11",
       "port": 554,
@@ -86,9 +99,9 @@
       "monitor_staffing": true,
       "reporting_enabled": true,
       "role": "workstation",
-      "expected_people": 1,
-      "min_people": 1,
-      "max_people": 1,
+      "expected_people": 2,
+      "min_people": 2,
+      "max_people": 2,
       "roi": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
     },
     {

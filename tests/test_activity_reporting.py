@@ -226,6 +226,73 @@ class ActivityReportingTest(unittest.TestCase):
 
         self.assertEqual(settings["meal_allowed_minutes"], 45)
 
+    def test_two_shifts_measure_each_changeover_independently(self):
+        config = json.loads(json.dumps(self.config))
+        config["reporting"]["shift"].pop("start")
+        config["reporting"]["shift"].pop("end")
+        config["reporting"].pop("meal")
+        config["reporting"]["shifts"] = [
+            {
+                "id": "morning",
+                "name": "Turno mañana",
+                "start": "07:00",
+                "end": "16:00",
+                "meal": {
+                    "window_start": "12:30",
+                    "window_end": "13:00",
+                    "allowed_minutes": 30,
+                },
+            },
+            {
+                "id": "afternoon",
+                "name": "Turno tarde",
+                "start": "16:00",
+                "end": "00:00",
+                "meal": {},
+            },
+        ]
+        sync_reporting_configuration(self.repository, config)
+
+        current = datetime(2026, 8, 10, 7, tzinfo=timezone.utc)
+        end = datetime(2026, 8, 11, 0, 30, tzinfo=timezone.utc)
+        while current <= end:
+            minute = current
+            if minute < datetime(2026, 8, 10, 7, 10, tzinfo=timezone.utc):
+                count = 1
+            elif minute < datetime(2026, 8, 10, 15, 40, tzinfo=timezone.utc):
+                count = 2
+            elif minute < datetime(2026, 8, 10, 16, 12, tzinfo=timezone.utc):
+                count = 1
+            elif minute < datetime(2026, 8, 10, 23, 40, tzinfo=timezone.utc):
+                count = 2
+            elif minute < datetime(2026, 8, 11, 0, 20, tzinfo=timezone.utc):
+                count = 1
+            else:
+                count = 0
+            self.repository.add_occupancy(
+                "cam01", "Corte", current, count, count,
+                2, 2, "valid", "ok" if count == 2 else "missing",
+            )
+            current += timedelta(minutes=1)
+
+        row = self.analytics.daily_report("2026-08-10")["workstations"][0]
+
+        self.assertEqual(len(row["shifts"]), 2)
+        self.assertEqual(row["period_seconds"], 17 * 3600)
+        self.assertEqual(row["arrival"]["late_arrivals_estimated"], 2)
+        self.assertEqual(
+            row["departure"]["early_departures_estimated"], 2
+        )
+        self.assertEqual(
+            row["departure"]["overtime_departures_estimated"], 1
+        )
+        self.assertEqual(row["meal"]["breaks_estimated"], 0)
+        self.assertEqual(row["shifts"][1]["meal"]["status"], "not_configured")
+        self.assertEqual(
+            row["shifts"][0]["departure"]["overtime_status"],
+            "not_configured",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

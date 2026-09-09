@@ -1,5 +1,7 @@
 import unittest
+from datetime import datetime, timezone
 
+from metrics.reporting_config import staffing_active
 from metrics.staffing import CountSmoother, StaffingStateMachine
 
 
@@ -45,6 +47,45 @@ class StaffingTest(unittest.TestCase):
         self.assertEqual(missing.data_status, "no_data")
         self.assertEqual(missing.transition["reason"], "no_data")
         self.assertEqual(rule.evaluate(0, at=31).rule_state, "confirming")
+
+    def test_outside_schedule_closes_incident_and_suppresses_alert(self):
+        rule = StaffingStateMachine(self.camera(), self.config())
+        rule.evaluate(0, at=0)
+        rule.evaluate(0, at=30)
+
+        outside = rule.evaluate(0, at=90, monitoring=False)
+
+        self.assertEqual(outside.rule_state, "outside_schedule")
+        self.assertEqual(outside.transition["type"], "closed")
+        self.assertIsNone(outside.alert)
+        self.assertEqual(
+            rule.evaluate(0, at=91, monitoring=True).rule_state,
+            "confirming",
+        )
+
+    def test_staffing_schedule_includes_both_shifts_but_not_overnight(self):
+        settings = {
+            "role": "workstation",
+            "timezone": "UTC",
+            "workdays": [0],
+            "shifts": [
+                {"start": "07:00", "end": "16:00"},
+                {"start": "16:00", "end": "00:00"},
+            ],
+        }
+
+        self.assertTrue(staffing_active(
+            settings, datetime(2026, 8, 10, 7, tzinfo=timezone.utc)
+        ))
+        self.assertTrue(staffing_active(
+            settings, datetime(2026, 8, 10, 16, tzinfo=timezone.utc)
+        ))
+        self.assertFalse(staffing_active(
+            settings, datetime(2026, 8, 11, 1, tzinfo=timezone.utc)
+        ))
+        self.assertFalse(staffing_active(
+            settings, datetime(2026, 8, 15, 12, tzinfo=timezone.utc)
+        ))
 
 
 if __name__ == "__main__":

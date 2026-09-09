@@ -88,6 +88,16 @@ function display(value, suffix = "", digits = 1) {
   return `${rendered}${suffix}`;
 }
 
+function scheduleText(row) {
+  if (Array.isArray(row.shifts) && row.shifts.length) {
+    return row.shifts.map((shift) =>
+      `${shift.name}: ${shift.start}-${shift.end}`
+    ).join(" · ");
+  }
+  return row.shift_start && row.shift_end
+    ? `${row.shift_start} - ${row.shift_end}` : "Pendiente";
+}
+
 function estimate(metric, key, suffix = "") {
   const status = metric?.status
     || metric?.early_departures_status
@@ -180,7 +190,7 @@ function renderWeeklyFacts(report) {
   const row = report.summary;
   const facts = [
     ["Puestos configurados", `${row.configured_workstations}/${row.workstations}`],
-    ["Personas planificadas", display(row.expected_people, "", 0)],
+    ["Dotación simultánea", display(row.expected_people, "", 0)],
     ["Horas-persona", display(row.person_hours, " h")],
     ["Cobertura de datos", display(row.data_coverage_percent, "%")],
     ["Alertas emitidas", display(row.alerts_total, "", 0)],
@@ -471,7 +481,7 @@ function renderSummary(report) {
   const row = report.summary;
   const metrics = [
     ["Puestos", display(row.workstations, "", 0)],
-    ["Personas esperadas", display(row.expected_people, "", 0)],
+    ["Dotación simultánea", display(row.expected_people, "", 0)],
     ["Cobertura de datos", display(row.data_coverage_percent, "%")],
     ["Dotación completa", display(row.staffing_coverage_percent, "%")],
     ["Horas-persona", display(row.person_hours, " h")],
@@ -493,9 +503,7 @@ function renderWorkstations(rows) {
     return;
   }
   elements.workstations.innerHTML = rows.map((row) => {
-    const schedule = row.shift_start && row.shift_end
-      ? `${row.shift_start} - ${row.shift_end}`
-      : "Pendiente";
+    const schedule = scheduleText(row);
     const late = estimate(row.arrival, "late_arrivals_estimated");
     const early = row.departure?.early_departures_status === "estimated"
       ? display(row.departure.early_departures_estimated, "", 0)
@@ -763,7 +771,7 @@ function renderCamera(row) {
   if (workstation) {
     elements.cameraSummary.innerHTML = [
       ["Ocupación promedio", display(row.occupancy_percent, "%")],
-      ["Personas esperadas", display(row.expected_people, "", 0)],
+      ["Esperadas por turno", display(row.expected_people, "", 0)],
       ["Cobertura de datos", display(row.data_coverage_percent, "%")],
       ["Dotación completa", display(row.staffing_coverage_percent, "%")],
       ["Llegadas tarde", display(row.arrival?.late_arrivals_estimated, "", 0)],
@@ -819,8 +827,7 @@ function renderCamera(row) {
     elements.cameraDailyEvents.innerHTML =
       dailyEventChart(cameraDailyRows(row, latestReport));
     elements.cameraAudit.innerHTML = auditMarkup([
-      ["Horario", row.shift_start && row.shift_end
-        ? `${row.shift_start} - ${row.shift_end}` : "Pendiente"],
+      ["Turnos", scheduleText(row)],
       ["Tolerancia de llegada", display(
         row.arrival_grace_minutes, " min"
       )],

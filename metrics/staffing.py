@@ -59,6 +59,7 @@ class StaffingStateMachine:
         self.candidate_since = None
         self.abnormal_since = None
         self.alert_sent = False
+        self.monitoring_active = True
 
     def _status(self, count):
         if count < self.minimum:
@@ -80,15 +81,31 @@ class StaffingStateMachine:
         self.alert_sent = False
         return StaffingObservation("no_data", None, None, "unknown", "no_data", transition)
 
-    def evaluate(self, raw_count, at=None):
+    def evaluate(self, raw_count, at=None, monitoring=True):
         """Suaviza el conteo y confirma cambios solo tras suficiente estabilidad."""
         now = time.monotonic() if at is None else float(at)
+        monitoring = bool(monitoring)
+        transition = None
+        if monitoring != self.monitoring_active:
+            if not monitoring and self.confirmed_status in {"missing", "extra"}:
+                transition = {"type": "closed", "reason": "outside_schedule"}
+            self.smoother.reset()
+            self.confirmed_status = "unknown"
+            self.candidate_status = None
+            self.candidate_since = None
+            self.abnormal_since = None
+            self.alert_sent = False
+            self.monitoring_active = monitoring
         smoothed = self.smoother.add(raw_count, now)
         target = self._status(smoothed)
-        transition = None
 
         if not self.enabled:
             return StaffingObservation("valid", raw_count, smoothed, target, "disabled")
+        if not monitoring:
+            return StaffingObservation(
+                "valid", raw_count, smoothed, "not_scheduled",
+                "outside_schedule", transition,
+            )
 
         if self.confirmed_status == "unknown" and target == "ok":
             self.confirmed_status = "ok"
