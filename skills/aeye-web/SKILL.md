@@ -11,6 +11,8 @@ description: Modificar la web de AEYE Actividad o AEYE Preview, graficos, filtro
 - Preview: `preview/index.html`, `preview.js`, `preview.css` y `state.py`;
   se integra con `main.py` y consulta `/preview-state.json`.
 No mezclar sus rutas ni asumir que un puerto sirve ambas interfaces.
+Preview conserva el ultimo JPEG valido: `image_revision` solo cambia tras una
+codificacion exitosa y el navegador activa el buffer nuevo despues de cargarlo.
 Es HTML/CSS/JavaScript sin pipeline npm ni framework de componentes.
 
 ## Flujo

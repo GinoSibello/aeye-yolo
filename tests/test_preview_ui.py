@@ -18,6 +18,7 @@ class PreviewUiTest(unittest.TestCase):
                 "connected": True,
                 "people": 2,
                 "rule_state": "ok",
+                "image_revision": 42,
                 "ip": "192.0.2.10",
                 "track_ids": ["P001"],
                 "last_error": "detalle interno",
@@ -30,6 +31,7 @@ class PreviewUiTest(unittest.TestCase):
         self.assertTrue(payload["preview_enabled"])
         self.assertEqual(payload["refresh_ms"], 750)
         self.assertEqual(camera["people"], 2)
+        self.assertEqual(camera["image_revision"], 42)
         self.assertNotIn("ip", camera)
         self.assertNotIn("track_ids", camera)
         self.assertNotIn("last_error", camera)
@@ -42,7 +44,12 @@ class PreviewUiTest(unittest.TestCase):
         self.assertIn('id="back-to-grid"', html)
         self.assertIn("function focusCamera", javascript)
         self.assertIn("function clearFocus", javascript)
+        self.assertIn("function settleCameraImage", javascript)
+        self.assertIn("revision === view.loadedRevision", javascript)
+        self.assertIn("view.pendingImage !== null", javascript)
+        self.assertIn("frame.append(...images, placeholder)", javascript)
         self.assertIn('event.key === "Escape"', javascript)
+        self.assertIn(".camera-image.active", stylesheet)
         self.assertIn(".camera-card.is-focused", stylesheet)
         self.assertIn('aria-hidden="true"', stylesheet)
 

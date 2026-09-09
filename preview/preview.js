@@ -42,6 +42,35 @@ function makeElement(tag, className, text) {
   return element;
 }
 
+function settleCameraImage(cameraId, imageIndex, loaded) {
+  const view = cards.get(cameraId);
+  if (!view || view.pendingImage !== imageIndex) return;
+  const image = view.images[imageIndex];
+  if (!loaded) {
+    image.removeAttribute("src");
+    view.pendingImage = null;
+    view.pendingRevision = null;
+    if (view.activeImage === null) {
+      view.frame.classList.remove("available");
+      view.placeholder.textContent = "Imagen no disponible";
+    }
+    return;
+  }
+
+  for (const [index, candidate] of view.images.entries()) {
+    const active = index === imageIndex;
+    candidate.classList.toggle("active", active);
+    candidate.setAttribute("aria-hidden", String(!active));
+    candidate.alt = active ? view.imageAlt : "";
+  }
+  view.activeImage = imageIndex;
+  view.loadedRevision = view.pendingRevision;
+  view.pendingImage = null;
+  view.pendingRevision = null;
+  view.frame.classList.add("available");
+  view.placeholder.textContent = "Esperando imagen";
+}
+
 function createCameraCard(cameraId, camera) {
   const card = makeElement("article", "camera-card");
   card.dataset.cameraId = cameraId;
@@ -74,21 +103,24 @@ function createCameraCard(cameraId, camera) {
     "aria-label",
     `Ampliar ${cameraDisplayName(cameraId, camera)}`
   );
-  const image = makeElement("img", "camera-image");
-  image.alt = `Vista de ${cameraDisplayName(cameraId, camera)}`;
-  image.decoding = "async";
+  const images = [0, 1].map((imageIndex) => {
+    const image = makeElement("img", "camera-image");
+    image.decoding = "async";
+    image.alt = "";
+    image.setAttribute("aria-hidden", "true");
+    image.addEventListener(
+      "load", () => settleCameraImage(cameraId, imageIndex, true)
+    );
+    image.addEventListener(
+      "error", () => settleCameraImage(cameraId, imageIndex, false)
+    );
+    return image;
+  });
   const placeholder = makeElement(
     "span",
     "frame-placeholder",
     "Esperando imagen"
   );
-  image.addEventListener("load", () => {
-    frame.classList.add("available");
-  });
-  image.addEventListener("error", () => {
-    frame.classList.remove("available");
-    placeholder.textContent = "Imagen no disponible";
-  });
   frame.addEventListener("dblclick", () => {
     if (focusedCamera === cameraId) {
       clearFocus();
@@ -105,7 +137,7 @@ function createCameraCard(cameraId, camera) {
       focusCamera(cameraId);
     }
   });
-  frame.append(image, placeholder);
+  frame.append(...images, placeholder);
 
   const footer = makeElement("footer", "camera-footer");
   const people = makeElement("span", "people-count");
@@ -120,7 +152,13 @@ function createCameraCard(cameraId, camera) {
     connection,
     expand,
     frame,
-    image,
+    images,
+    activeImage: null,
+    imageAlt: "",
+    imageRevision: null,
+    loadedRevision: null,
+    pendingImage: null,
+    pendingRevision: null,
     placeholder,
     people,
     rule,
@@ -154,7 +192,11 @@ function updateCameraCard(cameraId, camera) {
   view.expand.title = `Ampliar ${displayName}`;
   view.expand.setAttribute("aria-label", `Ampliar ${displayName}`);
   view.frame.setAttribute("aria-label", `Ampliar ${displayName}`);
-  view.image.alt = `Vista de ${displayName}`;
+  view.imageAlt = `Vista de ${displayName}`;
+  view.imageRevision = camera.image_revision ?? null;
+  if (view.activeImage !== null) {
+    view.images[view.activeImage].alt = view.imageAlt;
+  }
 }
 
 function syncCameras(cameras) {
@@ -202,7 +244,16 @@ function setPreviewState(enabled) {
   if (!previewEnabled) {
     for (const view of cards.values()) {
       view.frame.classList.remove("available");
-      view.image.removeAttribute("src");
+      for (const image of view.images) {
+        image.removeAttribute("src");
+        image.classList.remove("active");
+        image.alt = "";
+        image.setAttribute("aria-hidden", "true");
+      }
+      view.activeImage = null;
+      view.loadedRevision = null;
+      view.pendingImage = null;
+      view.pendingRevision = null;
       view.placeholder.textContent = "Preview desactivado";
     }
   }
@@ -210,12 +261,27 @@ function setPreviewState(enabled) {
 
 function refreshImages() {
   if (!previewEnabled) return;
-  const timestamp = Date.now();
   for (const [cameraId, view] of cards) {
     if (focusedCamera && focusedCamera !== cameraId) continue;
-    view.placeholder.textContent = "Esperando imagen";
-    view.image.src =
-      `/camera/${encodeURIComponent(cameraId)}.jpg?t=${timestamp}`;
+    const revision = view.imageRevision;
+    if (
+      revision === null
+      || revision === undefined
+      || revision === view.loadedRevision
+      || view.pendingImage !== null
+    ) {
+      continue;
+    }
+    const imageIndex = view.activeImage === 0 ? 1 : 0;
+    const image = view.images[imageIndex];
+    view.pendingImage = imageIndex;
+    view.pendingRevision = revision;
+    if (view.activeImage === null) {
+      view.placeholder.textContent = "Esperando imagen";
+    }
+    image.src = `/camera/${encodeURIComponent(cameraId)}.jpg?v=${
+      encodeURIComponent(revision)
+    }`;
   }
 }
 

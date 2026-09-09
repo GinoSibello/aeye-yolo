@@ -28,6 +28,9 @@ no asumir que el ejemplo representa todas las camaras.
 - Cupo simultaneo no es cantidad de personas unicas ni suma de plazas de turnos.
 - Tardanzas/salidas se estiman por plazas faltantes y ventanas observadas.
   Con dos presentes al relevo no puede probarse que llego el segundo equipo.
+- El diario calcula el dia actual solo hasta la hora real y expone
+  `not_started`, `in_progress` o `complete` por turno; un evento futuro usa
+  `pending`, no ausencia de datos ni ausencia de personas.
 - Acceso al bano y comedor se analiza de forma anonima e independiente.
   FIFO o track visible no prueba duracion individual ni puesto de procedencia.
 
@@ -53,6 +56,7 @@ Estos son puntos de control, no afirmaciones de que ya esten resueltos.
 ```bash
 python3 -m unittest discover -s tests -p 'test_activity_reporting.py' -v
 python3 -m unittest discover -s tests -p 'test_staffing.py' -v
+python3 -m unittest discover -s tests -p 'test_activity_audit.py' -v
 ```
 Cubrir medianoche, relevo, dos turnos, almuerzo, no laborable, cupo cero/sin
 configurar, camara offline, inicio tardio de captura, overrides y periodos

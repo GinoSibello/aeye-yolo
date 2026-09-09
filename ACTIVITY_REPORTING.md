@@ -16,6 +16,7 @@ El sistema ya puede:
 - registrar tracks locales y temporales en bano y comedor;
 - medir entradas, salidas y duraciones anonimas con una linea de acceso;
 - consultar reportes diarios, semanales y mensuales desde el dashboard;
+- revisar cobertura, ocupacion y eventos por cada turno del reporte diario;
 - comparar llegadas tarde, salidas anticipadas y alertas por puesto;
 - abrir una subpestana por camara con ocupacion horaria y evidencia diaria;
 - descargar el reporte diario en CSV y el semanal o mensual como PNG o PDF.
@@ -57,7 +58,11 @@ Esta instalacion usa dos turnos de lunes a viernes:
       "name": "Turno tarde",
       "start": "16:00",
       "end": "00:00",
-      "meal": {}
+      "meal": {
+        "window_start": "21:30",
+        "window_end": "22:00",
+        "allowed_minutes": 30
+      }
     }
   ]
 }
@@ -65,8 +70,9 @@ Esta instalacion usa dos turnos de lunes a viernes:
 
 Los dias usan lunes `0` a domingo `6`. Los horarios son locales y usan
 `HH:MM`. Un turno cuya salida es anterior al inicio se interpreta como un
-turno que cruza medianoche. El almuerzo esta asociado solamente al turno
-manana; no se estima una pausa del turno tarde porque no fue informada.
+turno que cruza medianoche. Cada pausa se evalua solamente dentro de la
+ventana del turno correspondiente: 12:30-13:00 por la manana y 21:30-22:00 por
+la tarde.
 
 Los puestos se ordenan por nombre operativo: Montaje 1, Montaje 2, Montaje 3,
 Montaje 4, Montaje 5 y Portico 2. Las camaras fisicas asociadas son 1, 2, 5,
@@ -161,15 +167,20 @@ de ocupacion ni son lo mismo que las llegadas tarde estimadas. Fuera de los
 turnos no se abren alertas de faltantes.
 
 Los intervalos `no_data` reducen la cobertura y nunca se convierten en cero
-personas. Si falta configuracion o evidencia suficiente, la API devuelve
-`null` y el dashboard muestra `Pendiente` o `Sin datos`.
+personas. En el dia actual, la cobertura usa solamente el tiempo laboral ya
+transcurrido; cada turno distingue `not_started`, `in_progress`
+y `complete`. Los eventos cuya ventana aun no termino usan
+`pending`, no `insufficient_data`. Si falta configuracion o
+evidencia suficiente, la API devuelve `null` y el dashboard muestra
+`Pendiente` o `Sin datos`.
 
 ## Dashboard y API
 
 `./run.sh` inicia el motor de vision y FastAPI en el mismo contenedor.
 
-- Dashboard de reportes: `http://IP_DE_LA_JETSON:8000`
-- OpenAPI: `http://IP_DE_LA_JETSON:8000/docs`
+- Dashboard de reportes: `http://aeye.local/`
+- OpenAPI: `http://aeye.local/docs`
+- Respaldo directo: `http://IP_DE_LA_JETSON:8000`
 - Reporte JSON: `GET /api/reports/daily?day=AAAA-MM-DD`
 - Reporte semanal JSON: `GET /api/reports/weekly?week=AAAA-MM-DD`
 - Reporte mensual JSON: `GET /api/reports/monthly?month=AAAA-MM-DD`
@@ -193,6 +204,10 @@ queda ligado a `127.0.0.1` y solo es accesible desde la Jetson.
 
 ## Limites y validacion
 
+La configuracion de horarios todavia no esta versionada. Los datos anteriores
+a la migracion de multiples turnos del 8 de septiembre de 2026 no se certifican
+como historicos de dos turnos; se interpretan con la configuracion actual.
+
 Antes de usar porcentajes como indicadores formales conviene validar por camara:
 
 1. ajustar la ROI y la linea de acceso con imagenes reales;
@@ -200,6 +215,19 @@ Antes de usar porcentajes como indicadores formales conviene validar por camara:
 3. exigir una cobertura de datos alta, idealmente superior al 95 %;
 4. revisar por separado oclusiones, cambios de luz y horas de mayor movimiento;
 5. usar entre 24 y 72 horas de observacion continua antes de fijar una linea base.
+
+La auditoria reproducible abre SQLite en modo solo lectura:
+
+```bash
+python3 tools/audit_activity_data.py   --day AAAA-MM-DD   --configuration-valid-from 2026-09-09   --visual-labels /ruta/local/conteos.csv
+```
+
+El CSV visual permanece en la Jetson y contiene
+`camera_id,shift_id,observed_at,reported_count,manual_count`. Para las ocho camaras y dos turnos son 160 observaciones locales. Para
+aprobar cada combinacion de camara y turno se requieren 10 observaciones,
+cobertura temporal minima de 95 % y al menos 90 % de conteos exactos. El
+resultado tambien informa error absoluto medio, sesgo, sobreconteos y
+subconteos. Sin etiquetas suficientes, el estado queda `pending`.
 
 AEYE no puede afirmar quien llego tarde, quien fue al bano ni si una ausencia
 esta justificada. Tampoco vincula por ahora un faltante de un puesto con una

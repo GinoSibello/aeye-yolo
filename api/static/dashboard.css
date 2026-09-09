@@ -660,13 +660,16 @@ main {
   color: var(--blue);
 }
 
-.status.ready {
+.status.ready,
+.status.complete {
   background: var(--green-soft);
   color: var(--green);
 }
 
 .status.partial,
-.status.pending {
+.status.pending,
+.status.in_progress,
+.status.not_started {
   background: var(--amber-soft);
   color: var(--amber);
 }
@@ -708,6 +711,16 @@ table {
   border-collapse: collapse;
   min-width: 1340px;
   width: 100%;
+}
+
+.shift-quality-table {
+  min-width: 1050px;
+}
+
+.section-note {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 0;
 }
 
 th,

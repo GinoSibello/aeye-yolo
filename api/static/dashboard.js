@@ -20,6 +20,7 @@ const elements = {
   downloadStatus: document.querySelector("#download-status"),
   summary: document.querySelector("#summary"),
   workstations: document.querySelector("#workstations"),
+  shiftQuality: document.querySelector("#shift-quality"),
   timelines: document.querySelector("#timelines"),
   specialAreas: document.querySelector("#special-areas"),
   quality: document.querySelector("#quality"),
@@ -56,6 +57,10 @@ const statusText = {
   ready: "Completa",
   partial: "Parcial",
   pending: "Pendiente",
+  complete: "Completo",
+  in_progress: "En curso",
+  not_started: "No iniciado",
+  not_scheduled: "No laborable",
 };
 
 let currentMode = "weekly";
@@ -535,6 +540,56 @@ function renderWorkstations(rows) {
   }).join("");
 }
 
+
+function shiftEvent(metric, statusKey, valueKey) {
+  const status = metric?.[statusKey];
+  if (status === "not_configured") return "No aplica";
+  if (status === "pending") return "Pendiente";
+  if (status === "insufficient_data") return "Sin datos";
+  return display(metric?.[valueKey], "", 0);
+}
+
+function renderShiftQuality(rows) {
+  const shiftRows = rows.flatMap((row) =>
+    (row.shifts || []).map((shift) => ({ row, shift }))
+  );
+  if (!shiftRows.length) {
+    elements.shiftQuality.innerHTML =
+      `<tr><td class="empty" colspan="9">
+        No hay turnos configurados para esta fecha.
+      </td></tr>`;
+    return;
+  }
+  elements.shiftQuality.innerHTML = shiftRows.map(({ row, shift }) => {
+    const coverage = shift.data_coverage_percent;
+    const coverageClass = typeof coverage !== "number"
+      ? "" : coverage >= 95 ? "value-good" : "value-danger";
+    return `<tr>
+      <td><span class="primary-text">${escapeHTML(row.name)}</span>
+        <span class="secondary-text">${escapeHTML(row.camera_id)} · ${escapeHTML(row.zone)}</span>
+      </td>
+      <td><span class="primary-text">${escapeHTML(shift.name)}</span>
+        <span class="secondary-text">${escapeHTML(`${shift.start}-${shift.end}`)}</span>
+      </td>
+      <td>${statusBadge(shift.period_status)}</td>
+      <td class="${coverageClass}">${escapeHTML(display(coverage, "%"))}</td>
+      <td>${escapeHTML(display(shift.average_occupancy))}</td>
+      <td>${escapeHTML(display(shift.staffing_coverage_percent, "%"))}</td>
+      <td>${escapeHTML(shiftEvent(
+        shift.arrival, "status", "late_arrivals_estimated"
+      ))}</td>
+      <td>${escapeHTML(shiftEvent(
+        shift.departure,
+        "early_departures_status",
+        "early_departures_estimated"
+      ))}</td>
+      <td>${escapeHTML(shiftEvent(
+        shift.meal, "status", "overruns_estimated"
+      ))}</td>
+    </tr>`;
+  }).join("");
+}
+
 function renderTimelines(rows) {
   if (!rows.length) {
     elements.timelines.innerHTML =
@@ -627,6 +682,7 @@ function renderDaily(report) {
   elements.dailyEventComparison.innerHTML =
     eventComparisonMarkup(report.workstations);
   renderWorkstations(report.workstations);
+  renderShiftQuality(report.workstations);
   renderTimelines(report.workstations);
   renderSpecialAreas(report.special_areas);
   renderQuality(report);

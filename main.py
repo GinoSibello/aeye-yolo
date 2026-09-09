@@ -375,6 +375,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             PREVIEW_ENABLED = False
             with STATE_LOCK:
                 LATEST_JPEG.clear()
+                for camera_state in STATE.values():
+                    camera_state["image_revision"] = None
             self.send_response(302)
             self.send_header("Location", "/")
             self.end_headers()
@@ -559,6 +561,7 @@ def main():
                 "track_ids": [],
                 "rule_state": "starting",
                 "last_update": None,
+                "image_revision": None,
             }
         if repository:
             repository.upsert_camera(cam, datetime.now().astimezone())
@@ -859,6 +862,7 @@ def main():
                     if ok:
                         with STATE_LOCK:
                             LATEST_JPEG[cam_id] = buf.tobytes()
+                            STATE[cam_id]["image_revision"] = seq
 
                 if result_ready - last_log[cam_id] >= float(
                     system_cfg.get("log_every_seconds", 10)

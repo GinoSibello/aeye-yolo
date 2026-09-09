@@ -431,6 +431,8 @@ def _combine_measurements(items, status_key, count_key, average_key):
     if not configured:
         return "not_configured", None, None
     if not estimated:
+        if any(item.get(status_key) == "pending" for item in configured):
+            return "pending", None, None
         return "insufficient_data", None, None
     count = sum(item.get(count_key) or 0 for item in estimated)
     weighted_minutes = sum(
@@ -440,6 +442,51 @@ def _combine_measurements(items, status_key, count_key, average_key):
     status = "estimated" if len(estimated) == len(configured) else "partial"
     average = _round(weighted_minutes / count if count else 0.0)
     return status, count, average
+
+
+def _period_status(start, end, as_of):
+    """Distingue ventanas futuras, activas y finalizadas."""
+    if as_of <= start:
+        return "not_started"
+    if as_of < end:
+        return "in_progress"
+    return "complete"
+
+
+def _pending_arrival():
+    """Representa una llegada cuya ventana de observacion aun no termino."""
+    return {
+        "status": "pending",
+        "late_arrivals_estimated": None,
+        "average_late_minutes": None,
+        "maximum_late_minutes": None,
+        "absent_slots": None,
+    }
+
+
+def _pending_departure():
+    """Representa salidas que todavia no pueden estimarse."""
+    return {
+        "early_departures_status": "pending",
+        "early_departures_estimated": None,
+        "average_early_minutes": None,
+        "overtime_status": "pending",
+        "overtime_departures_estimated": None,
+        "average_overtime_minutes": None,
+        "maximum_overtime_minutes": None,
+    }
+
+
+def _pending_meal(allowed_minutes):
+    """Representa una pausa configurada cuya ventana sigue pendiente."""
+    return {
+        "status": "pending",
+        "breaks_estimated": None,
+        "overruns_estimated": None,
+        "average_break_minutes": None,
+        "maximum_break_minutes": None,
+        "allowed_minutes": allowed_minutes,
+    }
 
 
 def _visible_sessions(rows, maximum_gap_seconds):
@@ -549,6 +596,7 @@ class ActivityAnalytics:
         tz,
         day_start,
         day_end,
+        as_of,
         samples=None,
         intervals=None,
         alerts=None,
@@ -579,7 +627,13 @@ class ActivityAnalytics:
             )
         else:
             intervals = _clip(intervals, query_start, query_end)
-        report_start, report_end = shift if scheduled else (day_start, day_end)
+        report_start, full_report_end = (
+            shift if scheduled else (day_start, day_end)
+        )
+        report_end = min(
+            full_report_end,
+            max(report_start, as_of),
+        ) if scheduled else full_report_end
         aggregate = _aggregate(
             intervals,
             report_start,
@@ -605,12 +659,11 @@ class ActivityAnalytics:
             "scheduled": scheduled,
             "shift_start": setting["shift_start"],
             "shift_end": setting["shift_end"],
-            "shifts": [{
-                "id": period["id"],
-                "name": period["name"],
-                "start": period["start"],
-                "end": period["end"],
-            } for period in shift_periods],
+            "period_status": (
+                _period_status(report_start, full_report_end, as_of)
+                if scheduled else "not_scheduled"
+            ),
+            "shifts": [],
             "arrival_grace_minutes": setting["arrival_grace_minutes"],
             "latest_occupancy": latest,
             **aggregate,
@@ -642,21 +695,46 @@ class ActivityAnalytics:
 
         shift_rows = []
         for index, period in enumerate(shift_periods):
-            arrival = _arrival_metrics(
-                intervals,
-                period["start_at"],
-                period["end_at"],
-                expected,
-                setting["arrival_grace_minutes"],
+            shift_status = _period_status(
+                period["start_at"], period["end_at"], as_of
             )
-            departure = _departure_metrics(
+            elapsed_end = min(
+                period["end_at"],
+                max(period["start_at"], as_of),
+            )
+            shift_aggregate = _aggregate(
                 intervals,
                 period["start_at"],
-                period["end_at"],
+                elapsed_end,
                 expected,
-                setting["early_departure_tolerance_minutes"],
-                setting["overtime_tolerance_minutes"],
-                setting["overtime_observation_minutes"],
+            )
+            arrival_probe_end = min(
+                period["end_at"],
+                period["start_at"] + timedelta(minutes=15),
+            )
+            arrival = (
+                _pending_arrival()
+                if as_of < arrival_probe_end
+                else _arrival_metrics(
+                    intervals,
+                    period["start_at"],
+                    period["end_at"],
+                    expected,
+                    setting["arrival_grace_minutes"],
+                )
+            )
+            departure = (
+                _pending_departure()
+                if as_of < period["end_at"]
+                else _departure_metrics(
+                    intervals,
+                    period["start_at"],
+                    period["end_at"],
+                    expected,
+                    setting["early_departure_tolerance_minutes"],
+                    setting["overtime_tolerance_minutes"],
+                    setting["overtime_observation_minutes"],
+                )
             )
             if index < len(shift_periods) - 1:
                 departure.update({
@@ -665,6 +743,17 @@ class ActivityAnalytics:
                     "average_overtime_minutes": None,
                     "maximum_overtime_minutes": None,
                 })
+            else:
+                overtime_end = period["end_at"] + timedelta(
+                    minutes=setting["overtime_observation_minutes"]
+                )
+                if as_of < overtime_end:
+                    departure.update({
+                        "overtime_status": "pending",
+                        "overtime_departures_estimated": None,
+                        "average_overtime_minutes": None,
+                        "maximum_overtime_minutes": None,
+                    })
             meal = _period_from_clocks(
                 day,
                 period.get("meal_window_start"),
@@ -672,21 +761,39 @@ class ActivityAnalytics:
                 tz,
                 period["start_at"],
             )
-            meal_metrics = _meal_metrics(
-                intervals,
-                period["start_at"],
-                period["end_at"],
-                meal[0] if meal else None,
-                meal[1] if meal else None,
-                expected,
-                period.get("meal_allowed_minutes"),
-                setting["absence_merge_gap_minutes"],
-            )
+            if not meal or period.get("meal_allowed_minutes") is None:
+                meal_metrics = _meal_metrics(
+                    intervals,
+                    period["start_at"],
+                    period["end_at"],
+                    None,
+                    None,
+                    expected,
+                    None,
+                    setting["absence_merge_gap_minutes"],
+                )
+            elif as_of < meal[1]:
+                meal_metrics = _pending_meal(
+                    period.get("meal_allowed_minutes")
+                )
+            else:
+                meal_metrics = _meal_metrics(
+                    intervals,
+                    period["start_at"],
+                    period["end_at"],
+                    meal[0],
+                    meal[1],
+                    expected,
+                    period.get("meal_allowed_minutes"),
+                    setting["absence_merge_gap_minutes"],
+                )
             shift_rows.append({
                 "id": period["id"],
                 "name": period["name"],
                 "start": period["start"],
                 "end": period["end"],
+                "period_status": shift_status,
+                **shift_aggregate,
                 "arrival": arrival,
                 "departure": departure,
                 "meal": meal_metrics,
@@ -743,30 +850,33 @@ class ActivityAnalytics:
         }
         return row
 
-    def _special_area(self, setting, day_start, day_end):
+    def _special_area(self, setting, day_start, day_end, as_of):
         """Resume ocupacion, tracks visibles y cruces de un area especial."""
-        samples = self._samples(setting["camera_id"], day_start, day_end)
+        effective_end = min(day_end, max(day_start, as_of))
+        samples = self._samples(
+            setting["camera_id"], day_start, effective_end
+        )
         intervals = build_intervals(
             samples,
             day_start,
-            day_end,
+            effective_end,
             setting["max_sample_gap_seconds"],
         )
-        aggregate = _aggregate(intervals, day_start, day_end)
-        tracks = self._tracks(setting["camera_id"], day_start, day_end)
+        aggregate = _aggregate(intervals, day_start, effective_end)
+        tracks = self._tracks(setting["camera_id"], day_start, effective_end)
         visible = _visible_sessions(
             tracks, setting["track_session_gap_seconds"]
         ) if tracks else []
         visits = [
             row for row in self._visits(
-                setting["camera_id"], day_start, day_end
+                setting["camera_id"], day_start, effective_end
             )
             if row["status"] == "completed" and row["duration_seconds"] is not None
         ]
         durations = [row["duration_seconds"] / 60.0 for row in visits]
         allowed = setting["meal_allowed_minutes"] if setting["role"] == "dining" else None
         access = self._access_counts(
-            setting["camera_id"], day_start, day_end
+            setting["camera_id"], day_start, effective_end
         )
         tz = ZoneInfo(setting["timezone"])
         return {
@@ -801,17 +911,27 @@ class ActivityAnalytics:
                 else "access_line_pending"
             ),
             "hourly": _hourly_profile(
-                intervals, day_start, day_end, tz
+                intervals, day_start, effective_end, tz
             ),
             "alerts": self._alerts(
-                setting["camera_id"], day_start, day_end
+                setting["camera_id"], day_start, effective_end
             ),
         }
 
-    def daily_report(self, selected_day, include_special_areas=True):
+    def daily_report(
+        self, selected_day, include_special_areas=True, as_of=None
+    ):
         """Genera el reporte consolidado para una fecha local."""
         if isinstance(selected_day, str):
             selected_day = date.fromisoformat(selected_day)
+        if as_of is None:
+            as_of = datetime.now(UTC)
+        elif isinstance(as_of, str):
+            as_of = _timestamp(as_of)
+        elif as_of.tzinfo is None:
+            as_of = as_of.replace(tzinfo=UTC)
+        else:
+            as_of = as_of.astimezone(UTC)
         settings = [
             _setting(row) for row in self.repository.workplaces()
         ]
@@ -831,14 +951,14 @@ class ActivityAnalytics:
         for setting in settings:
             if setting["role"] == "workstation":
                 workstations.append(self._workstation(
-                    setting, selected_day, tz, day_start, day_end
+                    setting, selected_day, tz, day_start, day_end, as_of
                 ))
             elif (
                 include_special_areas
                 and setting["role"] in {"restroom", "dining"}
             ):
                 special_areas.append(self._special_area(
-                    setting, day_start, day_end
+                    setting, day_start, day_end, as_of
                 ))
 
         scheduled = [row for row in workstations if row["scheduled"]]
@@ -882,7 +1002,17 @@ class ActivityAnalytics:
             key: sum(row["alerts"][key] for row in workstations + special_areas)
             for key in ("total", "missing", "extra")
         }
+        statuses = {row["period_status"] for row in scheduled}
+        if not scheduled:
+            period_status = "not_scheduled"
+        elif statuses == {"not_started"}:
+            period_status = "not_started"
+        elif statuses == {"complete"}:
+            period_status = "complete"
+        else:
+            period_status = "in_progress"
         summary = {
+            "period_status": period_status,
             "workstations": len(workstations),
             "configured_workstations": sum(
                 row["configuration_status"] == "ready"
@@ -949,7 +1079,7 @@ class ActivityAnalytics:
             "schema_version": 1,
             "date": selected_day.isoformat(),
             "timezone": timezone_name,
-            "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "generated_at": as_of.isoformat(timespec="seconds"),
             "interpretation": (
                 "Aggregate anonymous estimates; no employee identification "
                 "or cross-camera attribution"

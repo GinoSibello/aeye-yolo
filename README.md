@@ -197,14 +197,28 @@ docker ps --filter name=aeye-runtime
 docker logs --tail 50 -f aeye-runtime
 ```
 
-El dashboard historico y la API se inician junto con el motor:
+El dashboard historico y la API se inician junto con el motor. La Jetson
+publica el nombre mDNS `aeye.local` y las unidades versionadas de
+`tools/systemd/` permiten usar una direccion sin IP ni puerto:
 
 ```text
-http://IP_DE_LA_JETSON:8000
+http://aeye.local/
 ```
 
-Cualquier equipo de la red local puede abrirlo. Por ahora no tiene usuario ni
-contrasena, por lo que el puerto 8000 no debe exponerse a Internet.
+Para instalar el proxy local una sola vez:
+
+```bash
+sudo install -m 0644 tools/systemd/aeye-http.socket /etc/systemd/system/
+sudo install -m 0644 tools/systemd/aeye-http.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now aeye-http.socket
+```
+
+El acceso directo `http://IP_DE_LA_JETSON:8000` se conserva como
+respaldo. Si el Wi-Fi empresarial bloquea mDNS, el area de IT debe crear un
+registro DNS interno hacia la IP reservada de la Jetson. Cualquier equipo de la
+red local puede abrir el dashboard. Por ahora no tiene usuario ni contrasena,
+por lo que los puertos 80 y 8000 no deben exponerse a Internet.
 
 El visor en vivo permanece en `http://127.0.0.1:8080` y solo se abre desde la
 Jetson. El preview esta desactivado inicialmente para evitar trabajo de
@@ -252,7 +266,7 @@ configuracion efectiva, tracks locales, cruces y visitas anonimas.
 interactiva queda en:
 
 ```text
-http://IP_DE_LA_JETSON:8000/docs
+http://aeye.local/docs
 ```
 
 Rutas de reporte:

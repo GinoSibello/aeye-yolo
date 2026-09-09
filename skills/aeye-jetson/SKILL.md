@@ -13,6 +13,9 @@ AEYE_CONTAINER_NAME selecciona el nombre (default aeye-runtime).
 AEYE_CAMERA_PASSWORD_FILE apunta al secreto montado en solo lectura.
 AEYE_API_HOST/AEYE_API_PORT controlan API (defaults 0.0.0.0:8000).
 No asumir IP de la Jetson, estado del preview ni version de driver.
+`tools/systemd/aeye-http.socket` y `.service` pueden publicar el dashboard en
+puerto 80 mediante `systemd-socket-proxyd`; Preview sigue en loopback. Validar
+las unidades antes de instalarlas y no habilitarlas sin permiso del host.
 
 ## Diagnostico gradual
 1. Estado de git/config sin secretos y procesos/contenedores relevantes.

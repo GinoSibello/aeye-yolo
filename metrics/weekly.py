@@ -458,6 +458,7 @@ class WeeklyActivityAnalytics:
 
     def _period_report(self, period_start, period_end, period_name):
         """Consolida un rango cargando cada cámara una sola vez."""
+        as_of = datetime.now(UTC)
         day_count = (period_end - period_start).days + 1
         days = [
             period_start + timedelta(days=offset)
@@ -550,6 +551,7 @@ class WeeklyActivityAnalytics:
                     tz,
                     day_start,
                     day_end,
+                    as_of,
                     samples=all_samples[left:right],
                     intervals=all_intervals[interval_left:interval_right],
                     alerts=alerts_by_day[day],
@@ -566,7 +568,7 @@ class WeeklyActivityAnalytics:
             for day in days
         ]
         special_areas = [
-            self.daily._special_area(setting, start, end)
+            self.daily._special_area(setting, start, end, as_of)
             for setting in settings
             if setting["role"] in {"restroom", "dining"}
         ]
@@ -584,7 +586,7 @@ class WeeklyActivityAnalytics:
             "period_start": period_start.isoformat(),
             "period_end": period_end.isoformat(),
             "timezone": timezone_name,
-            "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "generated_at": as_of.isoformat(timespec="seconds"),
             "interpretation": (
                 "Aggregate anonymous estimates; no employee identification "
                 "or cross-camera attribution"

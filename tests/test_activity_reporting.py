@@ -248,7 +248,11 @@ class ActivityReportingTest(unittest.TestCase):
                 "name": "Turno tarde",
                 "start": "16:00",
                 "end": "00:00",
-                "meal": {},
+                "meal": {
+                    "window_start": "21:30",
+                    "window_end": "22:00",
+                    "allowed_minutes": 30,
+                },
             },
         ]
         sync_reporting_configuration(self.repository, config)
@@ -287,10 +291,161 @@ class ActivityReportingTest(unittest.TestCase):
             row["departure"]["overtime_departures_estimated"], 1
         )
         self.assertEqual(row["meal"]["breaks_estimated"], 0)
-        self.assertEqual(row["shifts"][1]["meal"]["status"], "not_configured")
+        self.assertEqual(row["shifts"][1]["meal"]["status"], "estimated")
+        self.assertEqual(row["shifts"][1]["meal"]["allowed_minutes"], 30)
         self.assertEqual(
             row["shifts"][0]["departure"]["overtime_status"],
             "not_configured",
+        )
+
+
+    def test_current_shift_uses_only_elapsed_scheduled_time(self):
+        current = datetime(2026, 8, 10, 8, tzinfo=timezone.utc)
+        as_of = datetime(2026, 8, 10, 10, tzinfo=timezone.utc)
+        while current < as_of:
+            self.repository.add_occupancy(
+                "cam01", "Corte", current, 2, 2,
+                2, 2, "valid", "ok",
+            )
+            current += timedelta(minutes=1)
+
+        report = self.analytics.daily_report(
+            "2026-08-10", as_of=as_of
+        )
+        row = report["workstations"][0]
+        shift = row["shifts"][0]
+
+        self.assertEqual(report["summary"]["period_status"], "in_progress")
+        self.assertEqual(row["period_status"], "in_progress")
+        self.assertEqual(row["period_seconds"], 2 * 3600)
+        self.assertEqual(shift["period_status"], "in_progress")
+        self.assertEqual(shift["period_seconds"], 2 * 3600)
+        self.assertGreater(shift["data_coverage_percent"], 98)
+        self.assertEqual(
+            shift["departure"]["early_departures_status"], "pending"
+        )
+
+    def test_future_shift_is_not_reported_as_missing_data(self):
+        config = json.loads(json.dumps(self.config))
+        config["reporting"]["shift"].pop("start")
+        config["reporting"]["shift"].pop("end")
+        config["reporting"].pop("meal")
+        config["reporting"]["shifts"] = [
+            {
+                "id": "morning",
+                "name": "Turno mañana",
+                "start": "07:00",
+                "end": "16:00",
+                "meal": {
+                    "window_start": "12:30",
+                    "window_end": "13:00",
+                    "allowed_minutes": 30,
+                },
+            },
+            {
+                "id": "afternoon",
+                "name": "Turno tarde",
+                "start": "16:00",
+                "end": "00:00",
+                "meal": {},
+            },
+        ]
+        sync_reporting_configuration(self.repository, config)
+        current = datetime(2026, 8, 10, 7, tzinfo=timezone.utc)
+        as_of = datetime(2026, 8, 10, 14, tzinfo=timezone.utc)
+        while current < as_of:
+            self.repository.add_occupancy(
+                "cam01", "Corte", current, 2, 2,
+                2, 2, "valid", "ok",
+            )
+            current += timedelta(minutes=1)
+
+        row = self.analytics.daily_report(
+            "2026-08-10", as_of=as_of
+        )["workstations"][0]
+        morning, afternoon = row["shifts"]
+
+        self.assertEqual(row["period_seconds"], 7 * 3600)
+        self.assertEqual(morning["period_status"], "in_progress")
+        self.assertEqual(afternoon["period_status"], "not_started")
+        self.assertEqual(afternoon["period_seconds"], 0)
+        self.assertIsNone(afternoon["data_coverage_percent"])
+        self.assertEqual(afternoon["arrival"]["status"], "pending")
+        self.assertEqual(
+            afternoon["departure"]["early_departures_status"], "pending"
+        )
+        self.assertEqual(afternoon["meal"]["status"], "not_configured")
+
+    def test_two_shift_time_boundaries_and_meal_pending(self):
+        config = json.loads(json.dumps(self.config))
+        config["reporting"]["shift"].pop("start")
+        config["reporting"]["shift"].pop("end")
+        config["reporting"].pop("meal")
+        config["reporting"]["shifts"] = [
+            {
+                "id": "morning",
+                "name": "Turno mañana",
+                "start": "07:00",
+                "end": "16:00",
+                "meal": {
+                    "window_start": "12:30",
+                    "window_end": "13:00",
+                    "allowed_minutes": 30,
+                },
+            },
+            {
+                "id": "afternoon",
+                "name": "Turno tarde",
+                "start": "16:00",
+                "end": "00:00",
+                "meal": {
+                    "window_start": "21:30",
+                    "window_end": "22:00",
+                    "allowed_minutes": 30,
+                },
+            },
+        ]
+        sync_reporting_configuration(self.repository, config)
+
+        before = self.analytics.daily_report(
+            "2026-08-10",
+            as_of=datetime(2026, 8, 10, 6, 59, tzinfo=timezone.utc),
+        )
+        meal = self.analytics.daily_report(
+            "2026-08-10",
+            as_of=datetime(2026, 8, 10, 12, 45, tzinfo=timezone.utc),
+        )
+        evening_meal = self.analytics.daily_report(
+            "2026-08-10",
+            as_of=datetime(2026, 8, 10, 21, 45, tzinfo=timezone.utc),
+        )
+        handover = self.analytics.daily_report(
+            "2026-08-10",
+            as_of=datetime(2026, 8, 10, 16, tzinfo=timezone.utc),
+        )
+        closed = self.analytics.daily_report(
+            "2026-08-10",
+            as_of=datetime(2026, 8, 11, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(
+            before["summary"]["period_status"], "not_started"
+        )
+        self.assertEqual(
+            meal["workstations"][0]["shifts"][0]["meal"]["status"],
+            "pending",
+        )
+        self.assertEqual(
+            evening_meal["workstations"][0]["shifts"][1]["meal"]["status"],
+            "pending",
+        )
+        handover_shifts = handover["workstations"][0]["shifts"]
+        self.assertEqual(handover_shifts[0]["period_status"], "complete")
+        self.assertEqual(
+            handover_shifts[1]["period_status"], "not_started"
+        )
+        self.assertEqual(
+            closed["summary"]["period_status"], "complete"
         )
 
 

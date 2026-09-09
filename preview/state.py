@@ -13,6 +13,7 @@ PUBLIC_FIELDS = (
     "raw_people",
     "rule_state",
     "last_update",
+    "image_revision",
 )
 
 

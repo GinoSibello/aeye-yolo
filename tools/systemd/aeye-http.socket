@@ -1,0 +1,9 @@
+[Unit]
+Description=AEYE friendly HTTP entrypoint
+
+[Socket]
+ListenStream=80
+NoDelay=true
+
+[Install]
+WantedBy=sockets.target
