@@ -52,7 +52,7 @@ def validate_sources(root):
             raise ValueError(f"{path}: descripcion invalida")
         names.add(name)
 
-    documents = [root / "AGENTS.md", root / "AGENT_WORKFLOW.md", *skills]
+    documents = [root / "AGENTS.md", root / "README.md", *skills]
     documents.extend(root.glob("*/AGENTS.md"))
     documents.extend(root.glob("api/*/AGENTS.md"))
     for document in documents:

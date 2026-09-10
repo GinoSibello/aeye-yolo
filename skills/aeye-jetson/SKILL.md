@@ -36,8 +36,7 @@ Bases, secretos e imagenes reales no se suben a Git ni a servicios de terceros.
 
 ## Benchmarks
 Leer documentacion y argumentos del script antes de ejecutar:
-STAGE0_BASELINE.md, STAGE1_FPS.md, STAGE2_NVDEC.md, STAGE3_BATCHING.md,
-STAGE4_PIPELINE.md, STAGE5_MODELS.md segun el cambio.
+la seccion Rendimiento de README.md y el propio script segun el cambio.
 Herramientas: tools/run_stage0_baseline.sh, run_stage1_fps.sh,
 run_stage2_nvdec.sh, run_stage3_batching.sh, run_stage4_pipeline.sh,
 run_stage5_operational.sh y run_stage5_accuracy.sh (todos bajo tools/).
@@ -50,5 +49,5 @@ ventana autorizada. No habilitar INT8 por mejora de FPS sin validar precision.
 Para scripts modificados, `bash -n ruta/del/script.sh` primero; no es prueba
 de Docker/GPU. Para resumenes usar fixtures y tests/test_stage5_summary.py.
 Registrar comando real, configuracion no sensible, duracion y limites del ensayo.
-Distinguir cambios preparados de desplegados. No avanzar etapas pendientes
+Distinguir cambios preparados de desplegados. No ejecutar pruebas pendientes
 solo porque existen las herramientas.

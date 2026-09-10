@@ -15,9 +15,9 @@ class AgentStructureTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         for name in ("skills", ".codex", ".opencode"):
             shutil.copytree(ROOT / name, self.root / name)
-        for name in ("AGENTS.md", "AGENT_WORKFLOW.md"):
+        for name in ("AGENTS.md", "README.md"):
             shutil.copy2(ROOT / name, self.root / name)
-        # Los links locales de la guia apuntan a estos archivos de soporte.
+        # Los links locales de la documentacion apuntan a estos archivos.
         for name in ("tools", "tests"):
             (self.root / name).mkdir()
         for name in ("tools/sync_agent_skills.py", "tests/test_agent_structure.py",
@@ -89,6 +89,14 @@ class AgentStructureTests(unittest.TestCase):
         path = self.root / ".codex/agents/aeye-api.toml"
         path.write_text(path.read_text().replace("skills/aeye-api/", "skills/absent/"))
         with self.assertRaisesRegex(ValueError, "inconsistente"):
+            validate_sources(self.root)
+
+    def test_readme_links_are_validated(self):
+        path = self.root / "README.md"
+        path.write_text(path.read_text().replace(
+            "(AGENTS.md)", "(DOCUMENTO_INEXISTENTE.md)", 1
+        ))
+        with self.assertRaisesRegex(ValueError, "enlace inexistente"):
             validate_sources(self.root)
 
 

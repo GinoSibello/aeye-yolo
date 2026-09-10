@@ -132,12 +132,14 @@ una base temporal para tests y configurar variables antes de importar la API.
 ## Mantenimiento y pendientes
 
 Actualizar la skill afectada cuando cambie una ruta, contrato o comando.
-No copiar documentacion extensa: enlazar fuentes y leer detalles bajo demanda.
-La guia para humanos y ejemplos de uso estan en `AGENT_WORKFLOW.md`.
+No copiar documentacion extensa: el manual funcional, la guia breve para
+agentes, las decisiones de rendimiento y los pendientes estan consolidados en
+`README.md`.
 
-La existencia de herramientas para las etapas 0-5 no certifica su resultado.
-Consultar `ROADMAP.md` y documentos STAGE antes de retomar optimizaciones.
-Quedan sujetos a solicitud futura la validacion con imagenes anotadas, DeepStream
-si las mediciones lo justifican y robustez prolongada/energia/temperatura.
+La existencia de herramientas historicamente llamadas `run_stage*` no certifica
+su resultado ni impone una secuencia de trabajo. Consultar la seccion de
+rendimiento del README antes de retomar optimizaciones. Quedan sujetos a
+solicitud futura la validacion con imagenes anotadas, DeepStream si las
+mediciones lo justifican y robustez prolongada/energia/temperatura.
 Calibracion ROI, versionado historico de horarios y validacion operativa son
 trabajo de producto separado, no efectos de instalar agentes.

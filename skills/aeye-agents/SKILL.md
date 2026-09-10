@@ -56,4 +56,4 @@ una instruccion sea verdadera. Confirmar descubrimiento en nueva sesion.
 Para cambios sustanciales, usar aeye-review con contexto limpio y tarea neutral.
 Mientras revisa, el principal puede comprobar links/tests sin editar los mismos
 archivos. Corregir hallazgos, repetir checks y documentar limites.
-Guia humana y fuentes oficiales: [AGENT_WORKFLOW.md](../../AGENT_WORKFLOW.md).
+Guia funcional y uso de la estructura: [README.md](../../README.md).

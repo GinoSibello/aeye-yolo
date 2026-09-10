@@ -1,433 +1,634 @@
-# AEYE YOLO
+# AEYE
 
-Sistema multi-camara para detectar personas en streams RTSP, medir ocupacion por
-zona y alertar cuando la dotacion permanece fuera de un rango configurado.
-Esta pensado para ejecutarse en NVIDIA Jetson mediante Docker, con inferencia
-TensorRT.
+AEYE es un sistema multicámara para NVIDIA Jetson que detecta personas en
+streams RTSP, mide ocupación anónima por zona y genera reportes operativos por
+puesto. Usa YOLO con TensorRT, tracking local con ByteTrack, persistencia
+SQLite, una API FastAPI y dos interfaces web: el dashboard histórico y un
+preview privado de cámaras.
 
-> Estado: prototipo operativo. Los IDs `P001`, `P002`, etc. son trayectorias
-> locales y temporales. No identifican empleados ni se conservan entre camaras
-> o reinicios.
+> **Estado:** prototipo operativo pendiente de calibración y validación
+> prolongada en cada instalación. Los identificadores P001, P002, etc. son
+> trayectorias temporales dentro de una cámara y una sesión; no identifican
+> empleados ni permiten seguir a una persona entre cámaras.
 
-## Trabajo con agentes de IA
+## Funcionalidad
 
-La [guia de agentes y skills](AGENT_WORKFLOW.md) explica como usar Codex y
-OpenCode con instrucciones por area, especialistas y revision independiente.
-El mapa para agentes esta en [AGENTS.md](AGENTS.md); no cambia el runtime.
+- Lectura concurrente de varias cámaras RTSP mediante FFmpeg o un backend
+  experimental GStreamer/NVDEC.
+- Detección de personas con un engine YOLO TensorRT FP16.
+- Inferencia secuencial o batching configurable entre cámaras.
+- Tracking ByteTrack independiente por cámara.
+- Regiones de interés (ROI) normalizadas para medir ocupación por zona.
+- Conteo crudo y suavizado, histéresis y estado explícito no_data.
+- Reglas de dotación mínima y máxima dentro de horarios configurados.
+- Incidentes y alertas por consola o webhook, con captura JPEG opcional.
+- Persistencia SQLite de muestras, incidentes, tracks locales, cruces y visitas
+  anónimas.
+- Reportes diarios, semanales y mensuales, con cobertura y detalle por cámara.
+- Descarga diaria CSV y exportación semanal o mensual a PNG/PDF.
+- Dashboard en la red local y preview en vivo limitado a la Jetson.
+- Herramientas reproducibles para medir FPS, latencia, consumo y precisión.
 
-## Funcionalidades
-
-- Lectura concurrente de multiples camaras RTSP.
-- Deteccion de personas con un engine YOLO optimizado para TensorRT.
-- Batching configurable entre camaras con timeout y validacion del engine.
-- IDs temporales por camara mediante ByteTrack.
-- Conteo de personas y reglas de dotacion minima/maxima por zona.
-- Conteo suavizado, histeresis y estado explicito `no_data`.
-- Alertas por consola o webhook despues de un tiempo configurable.
-- Captura JPEG del frame que origina cada alerta.
-- Dashboard diario de puestos, horarios, pausas y areas comunes.
-- ROI por camara y lineas de acceso opcionales para visitas anonimas.
-- Persistencia SQLite de ocupacion, tracks locales, cruces e incidentes.
-- API FastAPI para consultar metricas agregadas.
-- Reportes diarios, semanales y mensuales con detalle por camara.
-- Descarga CSV diaria y exportacion semanal o mensual a PNG/PDF.
-- Herramienta para medir la latencia del engine TensorRT.
-- Baseline reproducible con latencias por etapa y telemetria de la Jetson.
+AEYE informa ocupación y cupos anónimos. No implementa reconocimiento facial,
+no determina productividad o intención, no atribuye una ausencia a una causa y
+no relaciona faltantes de un puesto con entradas a baño o comedor.
 
 ## Arquitectura
 
-```text
-Camaras RTSP
+~~~text
+Cámaras RTSP
     |
     v
-CameraReader (FFmpeg o GStreamer/NVDEC, conserva el frame mas reciente)
+CameraReader (FFmpeg o GStreamer/NVDEC; conserva el frame más reciente)
     |
     v
-BatchScheduler (batch 1 o lote dinamico con timeout corto)
+BatchScheduler (secuencial o lote dinámico con timeout)
     |
     v
-YOLO / TensorRT (detecta cajas de clase persona)
+YOLO / TensorRT (cajas de clase persona)
     |
-    +--> ByteTrack (asigna IDs locales P001, P002...)
+    +--> ByteTrack (IDs locales P001, P002...)
     |
-    +--> StaffingStateMachine (suaviza, confirma y compara con minimo/maximo)
+    +--> ROI y StaffingStateMachine
               |
-              +--> SQLite: ocupacion e incidentes
-              +--> logs/alerts.jsonl e imagen de evidencia
+              +--> SQLite: ocupación, tracks, cruces e incidentes
+              +--> logs/alerts.jsonl e imágenes de alerta
               +--> webhook opcional
 
-Visor privado :8080              Dashboard y API LAN :8000
-```
+Preview privado :8080             Dashboard y API LAN :8000
+~~~
 
-## Requisitos
+| Ruta | Responsabilidad |
+| --- | --- |
+| main.py | Coordina captura, inferencia, tracking, reglas y preview |
+| vision/ | Captura, TensorRT, batching, tracking y ROI |
+| metrics/ | Muestreo, incidentes y reportes por período |
+| database/ | Repositorio SQLite y migraciones numeradas |
+| api/app.py | API FastAPI y publicación del dashboard |
+| api/static/ | Dashboard de actividad en JavaScript nativo |
+| preview/ | Vista en vivo de cámaras |
+| tools/ | Operación Jetson, auditoría y benchmarks |
+| tests/ | Pruebas unittest con fixtures y bases temporales |
 
-- NVIDIA Jetson con una version de JetPack compatible con la imagen base.
-- Docker configurado con NVIDIA Container Runtime.
-- Acceso de red desde la Jetson a las camaras RTSP.
-- Almacenamiento suficiente para base de datos, logs e imagenes de alerta.
-- Engine TensorRT (`.engine`) generado para la misma Jetson y entorno de software.
+## Requisitos e instalación
 
-La ruta RTSP actual sigue el formato de camaras Hikvision:
-`/Streaming/Channels/<canal>`. Para otra marca se debe adaptar
-`CameraReader.build_url` en `main.py`.
+- NVIDIA Jetson con JetPack compatible con la imagen base.
+- Docker con NVIDIA Container Runtime.
+- Acceso de red desde la Jetson a las cámaras RTSP.
+- Espacio para SQLite, logs e imágenes de alerta.
+- Un engine TensorRT generado en la misma Jetson y con versiones compatibles de
+  TensorRT, CUDA, JetPack, modelo y resolución.
 
-La captura usa OpenCV/FFmpeg cuando `system.capture` no esta configurado.
-Existe un backend experimental `gstreamer_nvdec` para H.264/H.265 y un
-fallback configurable a FFmpeg. La prueba de etapa 2 confirmo NVDEC real, pero
-no redujo CPU total con la conversion BGR actual; por eso FFmpeg sigue siendo
-el valor recomendado. La configuracion completa esta en
-`cameras.example.json` y los resultados en
-[STAGE2_NVDEC.md](STAGE2_NVDEC.md).
+La plantilla usa la ruta Hikvision /Streaming/Channels/canal. Para otra marca
+se debe adaptar CameraReader.build_url en main.py.
 
-## Instalacion
-
-```bash
+~~~bash
 git clone <URL_DEL_REPOSITORIO>
 cd aeye-yolo
 cp cameras.example.json cameras.json
-```
-
-Editar `cameras.json` con las IPs, zonas, canales y reglas reales. Este archivo
-esta ignorado por Git para no publicar informacion de la red local.
-
-Construir la imagen:
-
-```bash
 sudo docker build -t aeye-yolo:dev .
-```
+~~~
 
-Colocar `yolov8n.engine` en la raiz del proyecto. El engine debe haberse generado
-en la misma Jetson y con versiones compatibles de TensorRT, CUDA, JetPack e
-`imgsz`. Los engines estan excluidos del repositorio por su tamano y porque no
-son portables entre plataformas.
+Editar cameras.json con las cámaras, zonas y reglas reales. El archivo está
+ignorado por Git porque puede contener información de la red local. Colocar el
+.engine configurado en la ruta correspondiente. Los engines no se versionan:
+no son portables entre GPUs o entornos de JetPack/TensorRT.
 
-## Credencial de las camaras
+### Credencial RTSP
 
-La contrasena no debe guardarse en `cameras.json`, el Dockerfile ni Git. El
-proyecto espera un secreto protegido en `/etc/aeye/camera_password` y lo monta
-como archivo de solo lectura dentro del contenedor.
+La contraseña no debe guardarse en cameras.json, el Dockerfile ni Git. El
+arranque normal usa /etc/aeye/camera_password, montado dentro del contenedor
+como archivo de solo lectura:
 
-Crearlo una sola vez:
-
-```bash
+~~~bash
 sudo install -d -m 700 /etc/aeye
 sudo install -m 600 -o root -g root /dev/null /etc/aeye/camera_password
-read -rsp "Contrasena de las camaras: " CAMERA_PASSWORD; echo
+read -rsp "Contraseña de las cámaras: " CAMERA_PASSWORD; echo
 printf '%s' "$CAMERA_PASSWORD" | sudo tee /etc/aeye/camera_password >/dev/null
 unset CAMERA_PASSWORD
-```
+~~~
 
-Para usar otro archivo, definir `AEYE_CAMERA_PASSWORD_FILE` antes de ejecutar
-`run.sh`. Como compatibilidad de desarrollo, `main.py` tambien admite la
-variable `CAMERA_PASSWORD`, pero el arranque normal utiliza el archivo secreto.
+Para otra ubicación, definir AEYE_CAMERA_PASSWORD_FILE antes de ejecutar
+run.sh. CAMERA_PASSWORD existe solo como alternativa de desarrollo.
 
-## Configuracion
+## Configuración
 
-La configuracion se divide en seis secciones:
+La referencia editable es cameras.example.json. Sus valores son ejemplos y no
+prueban cuál es la configuración efectiva de una instalación.
 
-| Seccion | Responsabilidad |
+| Sección | Responsabilidad |
 | --- | --- |
-| `system` | Engine TensorRT, resolucion, frecuencia, batching y pipeline |
-| `preview` | Visor local, puerto y calidad JPEG |
-| `alerts` | Salida por consola o webhook |
-| `database` | Activacion y ruta de SQLite |
-| `reporting` | Zona horaria, turnos, comida y tolerancias |
-| `cameras` | Conexion y regla de cada camara |
+| system | Engine, resolución, FPS, captura, batching y pipeline |
+| preview | Visor local, puerto y calidad JPEG |
+| alerts | Consola o webhook |
+| database | Activación y ruta SQLite |
+| reporting | Zona horaria, días, turnos, comidas y tolerancias |
+| cameras | Conexión, rol, ROI y reglas por cámara |
 
-Campos principales de cada camara:
+Campos principales de una cámara:
 
-| Campo | Descripcion |
+| Campo | Descripción |
 | --- | --- |
-| `enabled` | Incluye la camara en el proceso |
-| `ip`, `port`, `channel` | Conexion RTSP |
-| `username` | Usuario RTSP; la contrasena se obtiene del secreto |
-| `zone` | Nombre operativo usado en metricas |
-| `role` | `workstation`, `restroom`, `dining` u `other` |
-| `reporting_enabled` | Guarda muestras para reportes |
-| `expected_people` | Dotacion simultanea esperada en cada turno |
-| `roi` | Poligono normalizado que delimita la zona |
-| `access_line` | Linea opcional de entrada/salida |
-| `monitor_staffing` | Evalua dotacion dentro del horario y genera incidentes |
-| `min_people`, `max_people` | Rango esperado en la zona |
+| id | Identificador estable usado en datos y configuración |
+| name, zone | Nombre de presentación y zona operativa |
+| enabled | Incluye la cámara en el proceso |
+| ip, port, channel, username | Conexión RTSP sin contraseña |
+| role | workstation, restroom, dining u other |
+| reporting_enabled | Guarda muestras para reportes |
+| expected_people | Cantidad simultánea esperada por turno |
+| monitor_staffing | Genera incidentes de dotación durante los turnos |
+| min_people, max_people | Rango esperado en la zona |
+| roi | Polígono normalizado de la zona medida |
+| access_line | Línea opcional para entradas y salidas anónimas |
 
-Variables de entorno admitidas:
+Ejemplo de puesto:
+
+~~~json
+{
+  "id": "cam02",
+  "name": "Puesto de armado",
+  "zone": "Armado",
+  "role": "workstation",
+  "reporting_enabled": true,
+  "expected_people": 2,
+  "monitor_staffing": true,
+  "roi": [[0.12, 0.18], [0.91, 0.18], [0.91, 0.96], [0.12, 0.96]]
+}
+~~~
+
+La ROI usa coordenadas entre 0 y 1. Un track cuenta cuando el centro inferior
+de su caja cae dentro del polígono. Una ROI que cubre toda la imagen debe
+calibrarse para excluir pasillos y puestos vecinos.
+
+### Turnos y pausas
+
+Los días usan lunes 0 a domingo 6; las horas locales usan HH:MM. Si el final es
+anterior al inicio, el turno cruza medianoche.
+
+~~~json
+"reporting": {
+  "enabled": true,
+  "timezone": "America/Argentina/Buenos_Aires",
+  "workdays": [0, 1, 2, 3, 4],
+  "shift": {
+    "arrival_grace_minutes": 5,
+    "early_departure_tolerance_minutes": 5,
+    "overtime_tolerance_minutes": 10,
+    "overtime_observation_minutes": 180
+  },
+  "shifts": [
+    {
+      "id": "morning",
+      "name": "Turno mañana",
+      "start": "07:00",
+      "end": "16:00",
+      "meal": {
+        "window_start": "12:30",
+        "window_end": "13:00",
+        "allowed_minutes": 30
+      }
+    }
+  ]
+}
+~~~
+
+Cada puesto se evalúa por turno. Fuera de días y horarios laborales,
+monitor_staffing no abre incidentes de faltantes. Las áreas comunes no deben
+tener dotación esperada ni reglas laborales de llegada.
+
+### Línea de acceso
+
+~~~json
+"access_line": {
+  "enabled": true,
+  "start": [0.20, 0.52],
+  "end": [0.82, 0.52],
+  "inside_side": "left",
+  "hysteresis": 0.015
+}
+~~~
+
+Si entradas y salidas aparecen invertidas, cambiar inside_side entre left y
+right. Las visitas se emparejan FIFO: la primera salida cierra la entrada
+abierta más antigua. Es una estimación anónima que pierde fiabilidad con cruces
+simultáneos, oclusiones, varias puertas o reinicios. Una visita abierta al
+reiniciar se marca abortada y no recibe una duración inventada.
+
+### Estabilidad del conteo
+
+| Campo | Función |
+| --- | --- |
+| confidence | Umbral mínimo entregado al tracker |
+| smoothing_window_seconds | Ventana de mediana para el conteo |
+| incident_confirmation_seconds | Anormalidad continua antes de abrir incidente |
+| recovery_confirmation_seconds | Normalidad continua antes de cerrarlo |
+| alert_after_seconds | Espera desde la confirmación hasta alertar |
+| tracker | Asociación, umbrales y tolerancia a oclusiones |
+| metrics_sample_every_seconds | Frecuencia de persistencia de muestras |
+| pipeline.copy_latest_frame | Copia o comparte el último frame inmutable |
+| pipeline.result_transfer | Transfiere resultados split o packed |
+
+Los umbrales deben calibrarse con escenas reales. Un valor bajo puede ayudar a
+ByteTrack a recuperar trayectorias débiles, pero no debe aprobarse solo porque
+mejore recall en un dataset general.
+
+### Variables de entorno
 
 | Variable | Valor predeterminado |
 | --- | --- |
-| `AEYE_CONFIG` | `/workspace/aeye-yolo/cameras.json` |
-| `AEYE_LOG_DIR` | `/workspace/aeye-yolo/logs` |
-| `AEYE_PERFORMANCE_PATH` | `<AEYE_LOG_DIR>/performance_summary.json` |
-| `AEYE_DB_PATH` | Valor de `database.path` |
-| `AEYE_API_HOST` | `0.0.0.0` |
-| `AEYE_API_PORT` | `8000` |
-| `CAMERA_PASSWORD_FILE` | `/run/secrets/camera_password` |
-| `CAMERA_PASSWORD` | Alternativa de desarrollo si no existe el archivo |
+| AEYE_CONFIG | /workspace/aeye-yolo/cameras.json |
+| AEYE_LOG_DIR | /workspace/aeye-yolo/logs |
+| AEYE_PERFORMANCE_PATH | &lt;AEYE_LOG_DIR&gt;/performance_summary.json |
+| AEYE_DB_PATH | Valor de database.path |
+| AEYE_API_HOST | 0.0.0.0 |
+| AEYE_API_PORT | 8000 |
+| CAMERA_PASSWORD_FILE | /run/secrets/camera_password |
+| CAMERA_PASSWORD | Alternativa de desarrollo |
 
-Controles de estabilidad en `system`:
+## Ejecución y acceso
 
-| Campo | Funcion |
-| --- | --- |
-| `confidence` | Umbral minimo entregado a ByteTrack; permite detecciones de baja confianza |
-| `smoothing_window_seconds` | Ventana usada para obtener la mediana del conteo |
-| `incident_confirmation_seconds` | Tiempo anormal continuo antes de abrir un incidente |
-| `recovery_confirmation_seconds` | Tiempo normal continuo antes de cerrar un incidente |
-| `alert_after_seconds` | Tiempo desde la confirmacion hasta enviar la alerta |
-| `tracker` | Umbrales, asociacion y tolerancia a oclusiones de ByteTrack |
-| `pipeline.copy_latest_frame` | Copia el snapshot o comparte el ultimo frame de solo lectura |
-| `pipeline.result_transfer` | Usa transferencias `split` o una matriz `packed` |
-
-La configuracion de ejemplo acepta detecciones desde `0.1` para que ByteTrack
-pueda recuperar trayectorias debiles, pero exige `0.4` para crear una nueva.
-Estos valores deben calibrarse con imagenes reales de cada instalacion.
-
-## Ejecucion
-
-```bash
+~~~bash
 ./run.sh
-```
+~~~
 
-El script crea el contenedor persistente `aeye-runtime` en segundo plano con
-la politica `unless-stopped`. Docker lo inicia de nuevo automaticamente cuando
-arranca la Jetson. Ejecutar `./run.sh` otra vez reutiliza el mismo contenedor.
+run.sh crea el contenedor persistente aeye-runtime con política unless-stopped.
+Una invocación posterior inicia o reutiliza el contenedor; no garantiza que una
+imagen nueva reemplace automáticamente uno existente.
 
-Para consultar su estado y sus logs:
-
-```bash
+~~~bash
 docker ps --filter name=aeye-runtime
 docker logs --tail 50 -f aeye-runtime
-```
+~~~
 
-El dashboard historico y la API se inician junto con el motor. La Jetson
-publica el nombre mDNS `aeye.local` y las unidades versionadas de
-`tools/systemd/` permiten usar una direccion sin IP ni puerto:
+| Servicio | Dirección |
+| --- | --- |
+| Dashboard | http://IP_DE_LA_JETSON:8000/ |
+| OpenAPI | http://IP_DE_LA_JETSON:8000/docs |
+| Preview | http://127.0.0.1:8080 desde la Jetson |
 
-```text
-http://aeye.local/
-```
+El preview está desactivado inicialmente para evitar el costo de JPEG. Los
+conteos y reportes continúan funcionando sin él. En su cuadrícula, una tarjeta
+puede ampliarse y Escape restaura todas las cámaras.
 
-Para instalar el proxy local una sola vez:
+Las unidades de tools/systemd/ pueden publicar el dashboard como
+http://aeye.local/ mediante mDNS y un proxy local en el puerto 80:
 
-```bash
+~~~bash
 sudo install -m 0644 tools/systemd/aeye-http.socket /etc/systemd/system/
 sudo install -m 0644 tools/systemd/aeye-http.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now aeye-http.socket
-```
+~~~
 
-El acceso directo `http://IP_DE_LA_JETSON:8000` se conserva como
-respaldo. Si el Wi-Fi empresarial bloquea mDNS, el area de IT debe crear un
-registro DNS interno hacia la IP reservada de la Jetson. Cualquier equipo de la
-red local puede abrir el dashboard. Por ahora no tiene usuario ni contrasena,
-por lo que los puertos 80 y 8000 no deben exponerse a Internet.
+El dashboard y la API no tienen autenticación por decisión del despliegue LAN.
+No se deben exponer los puertos 80 u 8000 a Internet. Si la red bloquea mDNS,
+se necesita un registro DNS interno o usar directamente la IP reservada.
 
-El visor en vivo permanece en `http://127.0.0.1:8080` y solo se abre desde la
-Jetson. El preview esta desactivado inicialmente para evitar trabajo de
-codificacion JPEG cuando no se necesita. Los conteos y reportes siguen
-funcionando con el preview apagado.
+### RustDesk sin monitor
 
-Cada tarjeta del visor permite ampliar una camara y ocultar temporalmente las
-demas. El boton `Todas las camaras` o la tecla `Escape` restaura la vista de
-cuadricula.
+Antes de modificar el entorno gráfico, comprobar SSH desde otro equipo y
+mantener esa sesión abierta. En Jetson no se debe reemplazar a ciegas el
+xorg.conf de NVIDIA.
 
-La configuracion inicial de puestos y horarios se explica en
-[ACTIVITY_REPORTING.md](ACTIVITY_REPORTING.md).
+~~~bash
+sudo bash tools/setup_rustdesk_headless.sh
+sudo reboot
+bash tools/check_rustdesk_headless.sh
+~~~
 
-## Reglas, incidentes y alertas
+Si Xorg existe pero RustDesk indica no display, se puede preparar un display
+virtual de 1920x1080:
 
-Para una zona configurada con `min_people: 1` y `max_people: 2`:
+~~~bash
+sudo bash tools/setup_jetson_dummy_display.sh
+sudo reboot
+~~~
 
-- Un conteo suavizado de `0` sostenido durante el tiempo de confirmacion abre
-  un incidente `missing`.
-- Un conteo suavizado de `3` o mas sostenido abre un incidente `extra`.
-- Volver al rango durante el tiempo de recuperacion cierra el incidente.
-- Permanecer fuera del rango durante `alert_after_seconds` genera una alerta.
+Para volver a la salida física NVIDIA o desactivar solo el modo headless:
 
-Cada muestra conserva el conteo crudo y el suavizado. Si no hay frame valido o
-falla la inferencia, se guarda `data_status: no_data`, con conteos nulos y estado
-`unknown`. Ese intervalo no se interpreta como cero personas ni se suma a los
-minutos de faltantes.
+~~~bash
+sudo bash tools/restore_jetson_nvidia_display.sh
+sudo reboot
 
-Cuando AEYE arranca, cierra los incidentes que quedaron abiertos en una ejecucion
-anterior usando la ultima muestra valida y el motivo `process_restart`. El tiempo
-apagado queda fuera del incidente. Si el problema continua, se confirma y abre
-un incidente nuevo.
+sudo bash tools/disable_rustdesk_headless.sh
+~~~
 
-Las alertas se escriben en `logs/alerts.jsonl`. El frame asociado se guarda en
-`logs/alert_images/` y su ruta queda incluida en el evento. Con
-`alerts.mode: "webhook"`, el mismo evento se envia como JSON mediante HTTP POST.
+Estos comandos cambian el host y requieren una ventana de mantenimiento. Los
+scripts de preparación no reinician GDM automáticamente.
 
-## Datos y API analitica
+## Métricas, reportes y alertas
 
-SQLite se inicializa automaticamente con las migraciones de
-`database/migrations/`. Guarda camaras, muestras de ocupacion, incidentes,
-configuracion efectiva, tracks locales, cruces y visitas anonimas.
+Cada muestra conserva raw_people_count, el conteo suavizado people_count y
+data_status. Una desconexión o inferencia fallida produce no_data, conteos nulos
+y estado unknown; nunca equivale a cero personas ni suma minutos de faltantes.
 
-`run.sh` inicia la vision y la API en el mismo contenedor. La documentacion
-interactiva queda en:
+- **Ocupación media:** integral del conteo suavizado durante intervalos válidos.
+- **Cobertura:** tiempo con muestras válidas dividido por el período aplicable.
+- **Dotación completa:** tiempo válido con conteo igual o superior al esperado.
+- **Horas-persona faltantes:** integral de la diferencia entre dotación y conteo.
+- **Llegada tardía estimada:** primer momento en que aparece cada cupo anónimo,
+  después de la tolerancia y con evidencia suficiente.
+- **Salida anticipada estimada:** última presencia de cada cupo antes del final.
+- **Después de hora:** cupos aún observados pasada la tolerancia de salida.
+- **Pausa de comida:** ausencia de un cupo iniciada dentro de su ventana.
 
-```text
-http://aeye.local/docs
-```
+Un cupo no es un empleado. Si se esperan dos personas, el sistema razona sobre
+dos plazas simultáneas sin saber quién las ocupa. Si en un cambio de turno el
+conteo no varía, AEYE no puede demostrar que hubo relevo.
 
-Rutas de reporte:
+En el día actual, la cobertura usa solo el tiempo laboral transcurrido. Cada
+turno distingue not_started, in_progress y complete; un evento cuya ventana no
+terminó queda pending. Falta de configuración, falta de evidencia y conteo cero
+son estados diferentes.
 
-- `GET /api/reports/daily?day=AAAA-MM-DD`
-- `GET /api/reports/weekly?week=AAAA-MM-DD`
-- `GET /api/reports/monthly?month=AAAA-MM-DD`
-- `GET /api/reports/daily.csv?day=AAAA-MM-DD`
-- `GET /api/reporting/configuration`
+Para una zona con mínimo 1 y máximo 2:
 
-Consultas disponibles:
+1. Un conteo suavizado de 0 sostenido abre un incidente missing.
+2. Un conteo de 3 o más sostenido abre un incidente extra.
+3. Volver al rango durante el tiempo de recuperación cierra el incidente.
+4. Superar alert_after_seconds después de confirmarlo emite la alerta.
 
-- Porcentaje de faltantes y ocupacion promedio por hora.
-- Minutos debajo del minimo.
-- Ocupacion minima, maxima y promedio por hora.
-- Cantidad de incidentes largos.
-- Tasa de falsos positivos revisados.
-- Tiempo individual por zona y transiciones, solo cuando una integracion externa
-  haya generado sesiones e identidades verificables.
+Al arrancar, AEYE cierra incidentes heredados en la última muestra válida con
+closure_reason=process_restart; el tiempo apagado no se inventa. Las alertas se
+escriben en logs/alerts.jsonl, sus imágenes en logs/alert_images/ y, cuando
+alerts.mode es webhook, también se envían por HTTP POST.
 
-Ver [ANALYTICS.md](ANALYTICS.md) para ejemplos de consultas.
+### Dashboard y API
 
-## Inferencia TensorRT
+El dashboard muestra períodos diarios, semanales de lunes a domingo y meses
+calendario. Incluye una vista general y detalle por cámara, ocupación horaria,
+cobertura, eventos y evolución. La exportación semanal/mensual ofrece PNG; la
+opción PDF usa la impresión A4 horizontal del navegador.
 
-TensorRT es el unico backend de produccion. `cameras.json` indica el archivo:
+Rutas de reportes:
 
-```json
-"tensorrt_engine": "yolov8n.engine"
-```
+- GET /api/health
+- GET /api/reporting/configuration
+- GET /api/reports/daily?day=AAAA-MM-DD
+- GET /api/reports/weekly?week=AAAA-MM-DD
+- GET /api/reports/monthly?month=AAAA-MM-DD
+- GET /api/reports/daily.csv?day=AAAA-MM-DD
 
-AEYE tuvo anteriormente un backend PyTorch que se utilizo como referencia para
-comparar rendimiento. Las pruebas en la Jetson mostraron una mejora suficiente
-con TensorRT y ese camino fue retirado para reducir configuracion y mantenimiento.
-El runtime no carga archivos `.pt` ni permite seleccionar otro backend. La
-herramienta `tools/export_batch_engine.sh` exporta en un contenedor temporal,
-separado del arranque de produccion, y copia el engine validado al proyecto.
+Consultas analíticas:
 
-Un `.engine` debe regenerarse si cambian la GPU, TensorRT, CUDA, JetPack, la
-imagen Docker o `imgsz`. Ver [TENSORRT.md](TENSORRT.md).
+- GET /api/analytics/understaffed-hours?zone=Zona&start=...&end=...
+- GET /api/analytics/minutes-below-minimum?zone=Zona&start=...&end=...
+- GET /api/analytics/occupancy-by-hour?zone=Zona&start=...&end=...
+- GET /api/analytics/long-incidents?start=...&end=...&minutes=20
+- GET /api/analytics/false-positives?start=...&end=...&minimum_reviews=10
+- GET /api/analytics/employee-zone-time?start=...&end=...&employee_id=...
+- GET /api/analytics/transitions?start=...&end=...&limit=20
 
-## Diagnostico de rendimiento
+Los intervalos son semiabiertos: start se incluye y end no. Usar ISO 8601 con
+zona horaria, por ejemplo 2026-08-10T00:00:00-03:00.
 
-La metodologia, configuracion observada y limites de las metricas se documentan
-en [STAGE0_BASELINE.md](STAGE0_BASELINE.md). Para capturar el baseline
-predeterminado de 120 segundos con preview desactivado:
+Los endpoints individuales solo tienen datos cuando una integración externa
+aporta identidad explícita y verificable, como badge, QR o RFID. Un track visual
+no se convierte en identidad. La tasa de falsos positivos también requiere
+revisiones humanas; sin ellas devuelve una lista vacía.
 
-```bash
+## Datos y auditoría
+
+SQLite se inicializa con migraciones numeradas de database/migrations/. La ruta
+predeterminada es data/aeye.db y puede cambiarse con AEYE_DB_PATH.
+
+Antes de convertir porcentajes en indicadores formales:
+
+1. calibrar cada ROI y línea con imágenes reales;
+2. comparar los conteos con observación humana en varios turnos;
+3. exigir cobertura alta, idealmente superior al 95 %;
+4. probar oclusiones, cambios de luz y momentos de mayor movimiento;
+5. observar continuamente entre 24 y 72 horas.
+
+La auditoría abre SQLite en modo de solo lectura:
+
+~~~bash
+python3 tools/audit_activity_data.py \
+  --day AAAA-MM-DD \
+  --configuration-valid-from AAAA-MM-DD \
+  --visual-labels /ruta/local/conteos.csv
+~~~
+
+El CSV local usa
+camera_id,shift_id,observed_at,reported_count,manual_count. La herramienta
+informa cobertura, exactitud, error absoluto medio, sesgo, sobreconteos y
+subconteos. Por defecto, cada combinación cámara-turno necesita al menos 95 %
+de cobertura, 90 % de conteos visuales exactos y 10 observaciones para quedar
+passed. Los argumentos --coverage-threshold, --exact-threshold y
+--minimum-visual-samples permiten cambiar esos umbrales; sin evidencia
+suficiente el resultado queda pending.
+
+Los horarios aún no están versionados. Un dato histórico se interpreta con la
+configuración disponible y no debe certificarse como si se conociera la regla
+vigente en su fecha.
+
+## TensorRT y modelos
+
+TensorRT es el único backend de producción. AEYE no acepta inference_backend,
+no carga .pt en runtime, no exporta desde el contenedor productivo y falla al
+arrancar si falta el .engine configurado.
+
+~~~json
+"tensorrt_engine": "yolov8n.engine",
+"imgsz": 640
+~~~
+
+Regenerar el engine al cambiar GPU, JetPack, CUDA, TensorRT, imagen Docker,
+modelo o imgsz. La forma rectangular se configura como [alto, ancho].
+
+Para batching existe un engine dinámico de hasta ocho entradas:
+
+~~~bash
+tools/export_batch_engine.sh yolov8n.pt yolov8n_batch8.engine 8 640
+~~~
+
+~~~json
+"tensorrt_engine": "yolov8n_batch8.engine",
+"batching": {
+  "enabled": true,
+  "max_batch_size": 8,
+  "timeout_ms": 10
+}
+~~~
+
+AEYE valida resolución, forma dinámica y batch máximo al arrancar. Con ocho
+cámaras a 6 FPS, el lote redujo el costo TensorRT por imagen pero aumentó la
+latencia p95 y la RAM; por eso la ruta secuencial sigue recomendada para esa
+carga. Conviene repetir la comparación si cambian cantidad de cámaras,
+frecuencia o prioridad entre throughput y latencia.
+
+Una evaluación FP16 sobre COCO val comparó YOLO11/YOLO26 nano y small en
+640x640 y 960x544. YOLO26s FP16 640 fue el candidato equilibrado preliminar
+(mAP50-95 de persona 0,5936 y MAE de conteo 0,910) y sostuvo ocho cámaras en una
+prueba de 120 segundos. Esto no demuestra que sea el engine desplegado ni que
+sea el mejor para las escenas AEYE: debe validarse con imágenes anotadas de cada
+cámara antes de cambiar producción. YOLO26n 640 queda como alternativa de menor
+costo.
+
+INT8 permanece bloqueado hasta contar con datos AEYE representativos, baseline
+FP16 y umbrales acordados de pérdida en precisión, recall, conteo, incidentes y
+estabilidad del tracker. COCO por sí solo no sirve para calibrar ni aprobarlo.
+
+## Rendimiento
+
+La instrumentación escribe performance_summary.json con FPS recibidos y
+analizados, descartes, duplicados, reconexiones y latencias de preproceso,
+TensorRT, postproceso, tracker, scheduler y antigüedad del frame. La latencia
+capture_to_result_ms comienza cuando el lector entrega el frame decodificado;
+no incluye exposición de cámara, red ni el tiempo interno de decodificación.
+
+Herramientas disponibles (sus nombres stage se conservan por compatibilidad,
+pero no representan fases obligatorias):
+
+~~~bash
 tools/run_stage0_baseline.sh
-```
-
-La comparacion controlada de 2, 4, 6 y 8 FPS por camara se documenta en
-[STAGE1_FPS.md](STAGE1_FPS.md). La serie completa utiliza configuraciones
-temporales y no modifica `cameras.json`:
-
-```bash
 tools/run_stage1_fps.sh 120
-```
-
-El prototipo GStreamer/NVDEC y su comparacion controlada con FFmpeg se
-documentan en [STAGE2_NVDEC.md](STAGE2_NVDEC.md):
-
-```bash
 tools/run_stage2_nvdec.sh 120
-```
-
-El batching entre camaras, el engine dinamico batch 8 y la comparacion contra
-la ruta secuencial se documentan en [STAGE3_BATCHING.md](STAGE3_BATCHING.md):
-
-```bash
 tools/run_stage3_batching.sh 120
-```
-
-El perfil de copias CPU y transferencias GPU, junto con la comparacion A/B de
-las rutas optimizadas, se documenta en [STAGE4_PIPELINE.md](STAGE4_PIPELINE.md):
-
-```bash
 tools/run_stage4_pipeline.sh 120
-```
-
-La comparacion FP16 de YOLO11/YOLO26, nano/small y 640/960x544, incluyendo
-precision sobre COCO anotado y validacion con ocho camaras, se documenta en
-[STAGE5_MODELS.md](STAGE5_MODELS.md):
-
-```bash
 tools/prepare_coco_val.sh
 tools/run_stage5_accuracy.sh
 tools/run_stage5_operational.sh 120
-```
+~~~
 
-## Pruebas
+Conclusiones observadas en la Jetson de prueba con ocho streams, preview
+apagado y ventanas de 120 segundos:
 
-Las pruebas unitarias no requieren camaras conectadas:
+- 6 FPS por cámara fue el máximo conservador del scheduler secuencial: entregó
+  aproximadamente 5,78 frames distintos por segundo y mantuvo margen.
+- 4 FPS es una alternativa de menor consumo; 8 FPS fue mejor esfuerzo y repitió
+  más frames porque las fuentes entregaban alrededor de 8 FPS.
+- TensorRT no fue el cuello de botella en el engine YOLOv8n 640 utilizado para
+  esas pruebas: su p95 se mantuvo cerca de 6 ms.
+- GStreamer/NVDEC funcionó en las ocho cámaras, pero la conversión a BGR aumentó
+  CPU, RAM, consumo y latencia p95; FFmpeg permanece predeterminado.
+- El batching promedio de 7,34 imágenes bajó 24,2 % la inferencia por imagen,
+  pero agregó cerca de 98 ms a la latencia p95 y unos 140 MB de RAM.
+- Compartir el último frame inmutable y transferir resultados packed eliminó
+  copias redundantes. El efecto sobre el detector completo fue pequeño y no
+  autoriza cambios de precisión o NMS.
+- Las pruebas cortas no demostraron estabilidad de memoria, temperatura o
+  cobertura durante 24 a 72 horas.
 
-```bash
-python3 -m unittest discover -v
-```
+Las comparaciones operativas con cámaras usaron configuraciones temporales y
+una base aislada, mantuvieron constantes resolución, preview, potencia y
+duración, y cambiaron la ruta estudiada; el ensayo de batching también necesitó
+su engine dinámico compatible. La matriz de precisión fue otra prueba: evaluó
+los engines sobre COCO sin streams ni preview. Los runners fallan si detectan
+errores o si no se activa la ruta que pretenden medir. Guardan
+performance_summary.json, telemetría y resúmenes bajo benchmarks/, que
+permanece fuera de Git.
 
-Para medir TensorRT sobre una imagen:
+En la comparación de copias, el brazo optimizado mostró además un aumento de
+aproximadamente 84 ms en captura-a-resultado p95, acompañado por jitter severo
+de una cámara y ejecuciones en orden fijo. Ese cambio no se atribuye a la
+optimización local, que elimina menos de medio milisegundo. Una comparación
+causal de latencia debe alternar el orden ABBA y repetirse con streams estables.
 
-```bash
-python3 tools/benchmark_detector.py imagen.jpg
-```
+Los resultados históricos fueron obtenidos con Jetson Linux R39.2.0, modo 15 W
+y una configuración concreta. Son una referencia reproducible, no una promesa
+para otro hardware, stream o engine. Los artefactos crudos viven localmente en
+benchmarks/ y están excluidos de Git.
 
-El dataset auxiliar puede prepararse con:
+~~~bash
+python3 tools/benchmark_detector.py imagen.jpg --warmup 20 --runs 200
+~~~
 
-```bash
-python3 tools/download_people_images.py --count 20
-```
+El FPS teórico solo mide inferencia. No incluye RTSP, tracking, preview ni
+reparto entre cámaras, y sin anotaciones el benchmark no mide precisión.
 
-Las imagenes descargadas no se incluyen en Git. El benchmark mide latencia y
-conteos, pero no precision si las imagenes no fueron anotadas manualmente.
+## Desarrollo y pruebas
 
-## Estructura del proyecto
+La suite no necesita cámaras conectadas:
 
-```text
-api/                 Dashboard y API FastAPI de reportes
-database/            Repositorio SQLite, modelos y migraciones
-identity/            Enlace temporal con identidades externas verificables
-metrics/             Registro, reglas y reportes de actividad
-tools/               Benchmark y utilidades de Jetson
-vision/              Captura, pipeline, batching, tracking y TensorRT
-main.py              Orquestacion RTSP, tracking, reglas y visor local
-ACTIVITY_REPORTING.md Configuracion y limites del reporte diario
-cameras.example.json Plantilla publica de configuracion
-Dockerfile           Entorno NVIDIA reproducible
-run.sh               Arranque local con secreto montado
-```
+~~~bash
+python3 -m unittest discover -s tests -v
+~~~
 
-## Limites y uso responsable
+La estructura de instrucciones para asistentes de código se mantiene separada
+porque es configuración operativa de las herramientas, no documentación de
+producto. [AGENTS.md](AGENTS.md) enruta las tareas y
+[skills/](skills/AGENTS.md) contiene las guías canónicas por área.
 
-- ByteTrack mejora cruces y oclusiones, pero aun puede cambiar IDs en escenas
-  complejas y necesita calibracion por instalacion.
-- Los IDs son anonimos, locales por camara y se reinician con el proceso.
-- El conteo no distingue empleados, clientes o proveedores.
-- Cada ROI debe calibrarse; una ROI completa puede contar pasillos o puestos
-  vecinos.
-- Una deteccion visual no demuestra productividad, intencion ni cumplimiento
-  individual.
-- Las metricas deben validarse contra conteos humanos representativos antes de
-  tomar decisiones operativas.
-- No deben automatizarse medidas laborales o disciplinarias a partir de estas
-  detecciones.
-- Una instalacion real necesita politicas de acceso, retencion de imagenes,
-  revision humana y cumplimiento de la normativa aplicable.
+En un clon nuevo, crear primero los enlaces compartidos y luego validarlos:
 
-Para identidad individual se recomienda integrar badge, QR o RFID y mantener
-la asociacion solo durante una sesion corta. El proyecto no implementa
-reconocimiento facial.
+~~~bash
+python3 tools/sync_agent_skills.py
+python3 tools/sync_agent_skills.py --check
+python3 -m unittest discover -s tests -p 'test_agent_structure.py' -v
+~~~
 
-## Archivos que no se publican
+El primer comando escribe solamente los enlaces faltantes bajo .agents/skills;
+--check no escribe y falla de forma deliberada si aún faltan. Si no están
+disponibles PyYAML o tomli, usar un entorno aislado:
 
-`.gitignore` excluye deliberadamente:
+~~~bash
+python3 -m venv /tmp/aeye-agent-tools
+/tmp/aeye-agent-tools/bin/pip install -r requirements-agent-tools.txt
+/tmp/aeye-agent-tools/bin/python tools/sync_agent_skills.py --check
+~~~
 
-- `cameras.json` con IPs y configuracion local.
-- Bases SQLite y sus archivos WAL/SHM.
-- Logs e imagenes de evidencia.
-- Modelos y artefactos de inferencia (`.pt`, `.onnx`, `.engine`, `.plan`).
-- Datasets descargados, caches de Python y copias `.orig`.
-- Archivos `.env` y nombres que contengan `password`.
+En Codex, abrir el proyecto en una conversación nueva e invocar una skill, por
+ejemplo: Usa $aeye-activity para revisar un reporte con datos temporales. Si no
+aparecen las skills, reiniciar la sesión y ejecutar el check anterior. El soporte
+de agentes personalizados depende de la versión del cliente; el agente principal
+puede leer la misma skill cuando no estén disponibles.
 
-Antes de cada publicacion conviene ejecutar `git status` y revisar todos los
-archivos que se van a incluir.
+En OpenCode, iniciar desde la raíz, seleccionar el agente aeye o invocar uno
+específico, por ejemplo: @aeye-web revisa la exportación del reporte. La carga
+real debe verificarse en el cliente instalado; la existencia de adaptadores no
+demuestra que una sesión ya los haya descubierto.
 
-Ver [ROADMAP.md](ROADMAP.md) para el estado de mejoras completadas y pendientes.
+Las skills no otorgan permisos ni autorizan por sí solas reinicios, migraciones
+reales, despliegues, pushes, cambios SSH o transferencias de imágenes.
+
+## Estado y trabajo pendiente
+
+Implementado:
+
+- estado no_data, suavizado, histéresis y recuperación tras reinicios;
+- ByteTrack local por cámara y ROI normalizada;
+- TensorRT único, batching opcional y optimizaciones de copias;
+- reportes de actividad anónima, dashboard, CSV, PNG/PDF y cobertura auditable;
+- áreas comunes con tracks locales y visitas FIFO opcionales;
+- cierre correcto de SQLite y pruebas con bases temporales.
+
+Pendiente antes de considerar una instalación validada:
+
+- completar nombres, cupos, horarios, ROI y líneas de acceso reales;
+- anotar escenas AEYE y contrastar conteos/eventos por cámara y turno;
+- versionar reglas y horarios con vigencia histórica;
+- agregar revisión humana de incidentes y conservar sus decisiones;
+- medir p95, precisión, memoria, temperatura, consumo y cobertura durante 24-72
+  horas con todas las cámaras;
+- reproducir un posible caso donde agregados semanales o mensuales omitan
+  eventos parciales observados en uno de varios turnos;
+- integrar badge, QR o RFID antes de habilitar métricas individuales;
+- evaluar DeepStream o energía/térmica solo si las mediciones lo justifican;
+- definir retención de datos e imágenes y, si cambia el alcance de red, diseñar
+  autenticación y permisos como una tarea explícita.
+
+## Límites y uso responsable
+
+- ByteTrack puede cambiar IDs con oclusiones o cruces complejos.
+- El conteo no distingue empleados, clientes ni proveedores.
+- Una detección no demuestra productividad, intención, incumplimiento o motivo
+  de ausencia.
+- El cambio de turno puede conservar la misma ocupación sin demostrar relevo.
+- Las estimaciones no deben automatizar decisiones laborales o disciplinarias.
+- Una instalación real necesita acceso controlado, retención definida, revisión
+  humana y cumplimiento de la normativa aplicable.
+
+## Archivos no publicados
+
+.gitignore excluye deliberadamente:
+
+- cameras.json y credenciales locales;
+- bases SQLite y archivos WAL/SHM;
+- logs e imágenes de evidencia;
+- modelos y artefactos .pt, .onnx, .engine y .plan;
+- datasets, benchmarks, caches y copias .orig;
+- .env y nombres que contengan password.
+
+Antes de publicar cambios, revisar git status y el contenido exacto que se va a
+incluir.
