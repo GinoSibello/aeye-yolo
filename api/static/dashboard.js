@@ -46,6 +46,7 @@ const elements = {
   cameraPeriod: document.querySelector("#camera-period"),
   cameraStatus: document.querySelector("#camera-status"),
   cameraSummary: document.querySelector("#camera-summary"),
+  cameraOccupancyTitle: document.querySelector("#camera-occupancy-title"),
   cameraOccupancyChart: document.querySelector("#camera-occupancy-chart"),
   cameraHourValues: document.querySelector("#camera-hour-values"),
   cameraEvents: document.querySelector("#camera-events"),
@@ -61,6 +62,9 @@ const statusText = {
   in_progress: "En curso",
   not_started: "No iniciado",
   not_scheduled: "No laborable",
+  estimated: "Estimado",
+  insufficient_data: "Sin datos suficientes",
+  not_configured: "No aplica",
 };
 
 let currentMode = "weekly";
@@ -103,13 +107,72 @@ function scheduleText(row) {
     ? `${row.shift_start} - ${row.shift_end}` : "Pendiente";
 }
 
-function estimate(metric, key, suffix = "") {
-  const status = metric?.status
-    || metric?.early_departures_status
-    || metric?.overtime_status;
-  if (status === "not_configured") return "Pendiente";
-  if (status === "insufficient_data") return "Sin datos";
-  return display(metric?.[key], suffix, 1);
+function measurementValue(
+  metric, statusKey, valueKey, suffix = "", digits = 0
+) {
+  const status = metric?.[statusKey];
+  if (status === "not_configured") return "No aplica";
+  if (status === "insufficient_data") return "Sin datos suficientes";
+  if (status === "pending") return "Pendiente";
+  const value = metric?.[valueKey];
+  if (status === "partial" && typeof value === "number") {
+    return `${display(value, suffix, digits)} (parcial)`;
+  }
+  return display(value, suffix, digits);
+}
+
+const eventEvidenceSettings = {
+  arrival: {
+    branch: "arrival",
+    statusKey: "status",
+    measuredKey: "measured_days",
+  },
+  early: {
+    branch: "departure",
+    statusKey: "early_departures_status",
+    measuredKey: "early_measured_days",
+  },
+  overtime: {
+    branch: "departure",
+    statusKey: "overtime_status",
+    measuredKey: "overtime_measured_days",
+  },
+  meal: {
+    branch: "meal",
+    statusKey: "status",
+    measuredKey: "measured_days",
+  },
+};
+
+function eventEvidence(row, eventName) {
+  const settings = eventEvidenceSettings[eventName];
+  const metric = row[settings.branch] || {};
+  if (metric[settings.statusKey] === "not_configured") return "No aplica";
+
+  if (currentMode !== "daily" && typeof row.scheduled_days === "number") {
+    const measured = metric[settings.measuredKey];
+    return typeof measured === "number"
+      ? `Evidencia: ${measured}/${row.scheduled_days} jornadas completas`
+      : "Evidencia pendiente";
+  }
+
+  const statuses = (row.shifts || []).map((shift) =>
+    shift[settings.branch]?.[settings.statusKey]
+  ).filter((status) => status && status !== "not_configured");
+  if (!statuses.length) return "No aplica";
+  const measured = statuses.filter((status) => status === "estimated").length;
+  return `Evidencia: ${measured}/${statuses.length} turnos`;
+}
+
+function cameraEventDetail(
+  row, eventName, averageLabel, averageKey
+) {
+  const settings = eventEvidenceSettings[eventName];
+  const metric = row[settings.branch] || {};
+  const average = measurementValue(
+    metric, settings.statusKey, averageKey, " min", 1
+  );
+  return `${averageLabel}: ${average} · ${eventEvidence(row, eventName)}`;
 }
 
 function formatDate(value, options) {
@@ -195,9 +258,9 @@ function renderWeeklyFacts(report) {
   const row = report.summary;
   const facts = [
     ["Puestos configurados", `${row.configured_workstations}/${row.workstations}`],
-    ["Dotación simultánea", display(row.expected_people, "", 0)],
+    ["Cupos simultáneos esperados", display(row.expected_people, "", 0)],
     ["Horas-persona", display(row.person_hours, " h")],
-    ["Cobertura de datos", display(row.data_coverage_percent, "%")],
+    ["Cobertura de turnos", display(row.data_coverage_percent, "%")],
     ["Alertas emitidas", display(row.alerts_total, "", 0)],
   ];
   elements.weeklyFacts.innerHTML = facts.map(([label, value]) =>
@@ -214,7 +277,7 @@ function renderWeeklyGauges(rows) {
   elements.workstationGauges.innerHTML = rows.map((row) => {
     const expected = row.expected_people === null
       ? "Dotación pendiente"
-      : `Dotación: ${row.expected_people} · Datos: ${display(
+      : `Cupos: ${row.expected_people} · Cobertura de turnos: ${display(
         row.data_coverage_percent, "%"
       )}`;
     return gaugeMarkup(row.occupancy_percent, row.name, expected);
@@ -282,8 +345,10 @@ function chartMarkup(rows, options = {}) {
       : ""
   )).join("");
 
+  const ariaLabel = options.ariaLabel
+    || "Ocupación respecto de la dotación por hora del día";
   return `<svg viewBox="0 0 ${width} ${height}" role="img"
-    aria-label="Ocupación promedio por hora">
+    aria-label="${escapeHTML(ariaLabel)}">
     ${grid}
     ${options.target === false ? "" : `<line x1="${left}" y1="${y(100)}"
       x2="${width - right}" y2="${y(100)}" class="chart-target"/>`}
@@ -304,7 +369,7 @@ function renderWeeklyEvents(summary) {
     [
       "Llegadas tarde",
       display(summary.late_arrivals_estimated, "", 0),
-      `Promedio: ${display(summary.average_late_minutes, " min")}`,
+      `Demora media de tardanzas: ${display(summary.average_late_minutes, " min")}`,
     ],
     [
       "Salidas anticipadas",
@@ -319,7 +384,7 @@ function renderWeeklyEvents(summary) {
     [
       "Pausas excedidas",
       display(summary.meal_overruns_estimated, "", 0),
-      `Pausa media: ${display(summary.average_break_minutes, " min")}`,
+      `Duración media de todas las pausas: ${display(summary.average_break_minutes, " min")}`,
     ],
   ];
   elements.weeklyEvents.innerHTML = events.map((row) =>
@@ -350,18 +415,36 @@ function eventComparisonMarkup(rows) {
   </div>`;
   const content = rows.map((row) => {
     const series = [
-      ["late", eventValue(row.arrival?.late_arrivals_estimated)],
-      ["early", eventValue(row.departure?.early_departures_estimated)],
-      ["alerts", row.alerts?.total || 0],
+      {
+        className: "late",
+        value: eventValue(row.arrival?.late_arrivals_estimated),
+        rendered: measurementValue(
+          row.arrival, "status", "late_arrivals_estimated"
+        ),
+      },
+      {
+        className: "early",
+        value: eventValue(row.departure?.early_departures_estimated),
+        rendered: measurementValue(
+          row.departure,
+          "early_departures_status",
+          "early_departures_estimated"
+        ),
+      },
+      {
+        className: "alerts",
+        value: row.alerts?.total || 0,
+        rendered: display(row.alerts?.total || 0, "", 0),
+      },
     ];
     return `<div class="comparison-row">
       <strong title="${escapeHTML(row.name)}">${escapeHTML(row.name)}</strong>
       <div class="comparison-series">
-        ${series.map(([className, value]) => {
+        ${series.map(({ className, value, rendered }) => {
           const width = value === null ? 0 : value / maximum * 100;
           return `<div><span class="comparison-track">
             <i class="${className}" style="width:${width}%"></i>
-          </span><b>${escapeHTML(display(value, "", 0))}</b></div>`;
+          </span><b>${escapeHTML(rendered)}</b></div>`;
         }).join("")}
       </div>
     </div>`;
@@ -448,7 +531,7 @@ function renderWeekly(report) {
     `${monthly ? "Mes" : "Semana"} del ${range}`;
   elements.overallGauge.innerHTML = gaugeMarkup(
     summary.occupancy_percent,
-    "Promedio general",
+    "Ocupación del período",
     "Solo puestos con dotación configurada",
     true
   );
@@ -470,7 +553,7 @@ function renderWeekly(report) {
     );
   }
   elements.weeklyCoverage.textContent =
-    `Cobertura ${display(coverage, "%")}`;
+    `Cobertura de turnos ${display(coverage, "%")}`;
 
   elements.weeklyQuality.textContent = summary.scheduled_station_days
     ? `${summary.measured_station_days}/${summary.scheduled_station_days}
@@ -486,13 +569,13 @@ function renderSummary(report) {
   const row = report.summary;
   const metrics = [
     ["Puestos", display(row.workstations, "", 0)],
-    ["Dotación simultánea", display(row.expected_people, "", 0)],
-    ["Cobertura de datos", display(row.data_coverage_percent, "%")],
+    ["Cupos simultáneos esperados", display(row.expected_people, "", 0)],
+    ["Cobertura de turnos", display(row.data_coverage_percent, "%")],
     ["Dotación completa", display(row.staffing_coverage_percent, "%")],
     ["Horas-persona", display(row.person_hours, " h")],
     ["Horas-persona faltantes", display(row.missing_person_hours, " h")],
     ["Llegadas tarde estimadas", display(row.late_arrivals_estimated, "", 0)],
-    ["Promedio de demora", display(row.average_late_minutes, " min")],
+    ["Demora media de tardanzas", display(row.average_late_minutes, " min")],
     ["Pausas excedidas estimadas", display(row.meal_overruns_estimated, "", 0)],
     ["Alertas emitidas", display(row.alerts_total, "", 0)],
   ];
@@ -509,16 +592,22 @@ function renderWorkstations(rows) {
   }
   elements.workstations.innerHTML = rows.map((row) => {
     const schedule = scheduleText(row);
-    const late = estimate(row.arrival, "late_arrivals_estimated");
-    const early = row.departure?.early_departures_status === "estimated"
-      ? display(row.departure.early_departures_estimated, "", 0)
-      : row.departure?.early_departures_status === "insufficient_data"
-        ? "Sin datos" : "Pendiente";
-    const overtime = row.departure?.overtime_status === "estimated"
-      ? display(row.departure.overtime_departures_estimated, "", 0)
-      : row.departure?.overtime_status === "insufficient_data"
-        ? "Sin datos" : "Pendiente";
-    const meal = estimate(row.meal, "overruns_estimated");
+    const late = measurementValue(
+      row.arrival, "status", "late_arrivals_estimated"
+    );
+    const early = measurementValue(
+      row.departure,
+      "early_departures_status",
+      "early_departures_estimated"
+    );
+    const overtime = measurementValue(
+      row.departure,
+      "overtime_status",
+      "overtime_departures_estimated"
+    );
+    const meal = measurementValue(
+      row.meal, "status", "overruns_estimated"
+    );
     return `<tr>
       <td><span class="primary-text">${escapeHTML(row.name)}</span>
         <span class="secondary-text">${escapeHTML(row.camera_id)} · ${escapeHTML(row.zone)}</span>
@@ -529,7 +618,7 @@ function renderWorkstations(rows) {
       <td>${escapeHTML(display(row.data_coverage_percent, "%"))}</td>
       <td>${escapeHTML(display(row.staffing_coverage_percent, "%"))}</td>
       <td class="${(row.missing_person_hours || 0) > 0 ? "value-danger" : ""}">${escapeHTML(display(row.missing_person_hours, " h"))}</td>
-      <td class="${late !== "0" && late !== "Pendiente" ? "value-danger" : ""}">${escapeHTML(late)}</td>
+      <td class="${(row.arrival?.late_arrivals_estimated || 0) > 0 ? "value-danger" : ""}">${escapeHTML(late)}</td>
       <td>${escapeHTML(early)}</td>
       <td>${escapeHTML(overtime)}</td>
       <td>${escapeHTML(meal)}</td>
@@ -542,11 +631,7 @@ function renderWorkstations(rows) {
 
 
 function shiftEvent(metric, statusKey, valueKey) {
-  const status = metric?.[statusKey];
-  if (status === "not_configured") return "No aplica";
-  if (status === "pending") return "Pendiente";
-  if (status === "insufficient_data") return "Sin datos";
-  return display(metric?.[valueKey], "", 0);
+  return measurementValue(metric, statusKey, valueKey);
 }
 
 function renderShiftQuality(rows) {
@@ -642,8 +727,8 @@ function renderSpecialAreas(rows) {
         ${statusBadge(row.configuration_status)}
       </header>
       <dl>
-        ${areaMetric("Ocupación promedio", display(row.average_occupancy))}
-        ${areaMetric("Cobertura de datos", display(row.data_coverage_percent, "%"))}
+        ${areaMetric("Ocupación media (personas)", display(row.average_occupancy))}
+        ${areaMetric("Cobertura calendario", display(row.data_coverage_percent, "%"))}
         ${areaMetric("Tracks locales observados", display(row.anonymous_tracks_seen, "", 0))}
         ${areaMetric("Tiempo visible promedio", display(row.average_visible_minutes, " min"))}
         ${areaMetric("Entradas / salidas", visitPending ? "Línea pendiente" : `${row.entries} / ${row.exits}`)}
@@ -660,7 +745,7 @@ function renderQuality(report) {
     ["Zona horaria", report.timezone],
     ["Configuración completa", `${summary.configured_workstations}/${summary.workstations}`],
     ["Elementos pendientes", display(summary.pending_configuration, "", 0)],
-    ["Cobertura del reporte", display(summary.data_coverage_percent, "%")],
+    ["Cobertura del reporte (turnos)", display(summary.data_coverage_percent, "%")],
   ];
   elements.quality.innerHTML = items.map(([label, value]) =>
     `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(value)}</dd></div>`
@@ -758,7 +843,9 @@ function eventBarsMarkup(items) {
       <span>${escapeHTML(item.label)}</span>
       <span class="event-bar-track"><i class="${item.tone}"
         style="width:${width}%"></i></span>
-      <strong>${escapeHTML(display(item.value, "", 0))}</strong>
+      <strong>${escapeHTML(
+        item.displayValue ?? display(item.value, "", 0)
+      )}</strong>
       <small>${escapeHTML(item.detail || "")}</small>
     </div>`;
   }).join("");
@@ -823,17 +910,26 @@ function renderCamera(row) {
     `status ${row.configuration_status || "pending"}`;
   elements.cameraStatus.textContent =
     statusText[row.configuration_status] || row.configuration_status;
+  elements.cameraOccupancyTitle.textContent = workstation
+    ? "Ocupación respecto de la dotación por hora"
+    : "Ocupación media por hora";
 
   if (workstation) {
     elements.cameraSummary.innerHTML = [
-      ["Ocupación promedio", display(row.occupancy_percent, "%")],
-      ["Esperadas por turno", display(row.expected_people, "", 0)],
-      ["Cobertura de datos", display(row.data_coverage_percent, "%")],
+      ["Ocupación respecto de la dotación", display(row.occupancy_percent, "%")],
+      ["Cupos simultáneos esperados", display(row.expected_people, "", 0)],
+      ["Cobertura de turnos", display(row.data_coverage_percent, "%")],
       ["Dotación completa", display(row.staffing_coverage_percent, "%")],
-      ["Llegadas tarde", display(row.arrival?.late_arrivals_estimated, "", 0)],
-      ["Demora promedio", display(row.arrival?.average_late_minutes, " min")],
-      ["Salidas anticipadas", display(
-        row.departure?.early_departures_estimated, "", 0
+      ["Llegadas tarde", measurementValue(
+        row.arrival, "status", "late_arrivals_estimated"
+      )],
+      ["Demora media de tardanzas", measurementValue(
+        row.arrival, "status", "average_late_minutes", " min", 1
+      )],
+      ["Salidas anticipadas", measurementValue(
+        row.departure,
+        "early_departures_status",
+        "early_departures_estimated"
       )],
       ["Alertas emitidas", display(alerts.total, "", 0)],
     ].map(([label, value]) => metric(label, value)).join("");
@@ -843,7 +939,7 @@ function renderCamera(row) {
     elements.cameraHourValues.innerHTML = hourly.map((hour) =>
       `<div><time>${escapeHTML(hour.hour)}</time><strong>${escapeHTML(
         display(hour.occupancy_percent, "%")
-      )}</strong><small>Datos ${escapeHTML(
+      )}</strong><small>Cobertura ${escapeHTML(
         display(hour.data_coverage_percent, "%")
       )}</small></div>`
     ).join("");
@@ -851,28 +947,50 @@ function renderCamera(row) {
       {
         label: "Llegadas tarde", tone: "late",
         value: row.arrival?.late_arrivals_estimated,
-        detail: `Promedio ${display(row.arrival?.average_late_minutes, " min")}`,
+        displayValue: measurementValue(
+          row.arrival, "status", "late_arrivals_estimated"
+        ),
+        detail: cameraEventDetail(
+          row, "arrival", "Demora media entre tardanzas",
+          "average_late_minutes"
+        ),
       },
       {
         label: "Salidas anticipadas", tone: "early",
         value: row.departure?.early_departures_estimated,
-        detail: `Promedio ${display(
-          row.departure?.average_early_minutes, " min"
-        )}`,
+        displayValue: measurementValue(
+          row.departure,
+          "early_departures_status",
+          "early_departures_estimated"
+        ),
+        detail: cameraEventDetail(
+          row, "early", "Anticipación media entre salidas",
+          "average_early_minutes"
+        ),
       },
       {
         label: "Después de hora", tone: "overtime",
         value: row.departure?.overtime_departures_estimated,
-        detail: `Promedio ${display(
-          row.departure?.average_overtime_minutes, " min"
-        )}`,
+        displayValue: measurementValue(
+          row.departure,
+          "overtime_status",
+          "overtime_departures_estimated"
+        ),
+        detail: cameraEventDetail(
+          row, "overtime", "Permanencia media entre casos",
+          "average_overtime_minutes"
+        ),
       },
       {
         label: "Pausas excedidas", tone: "breaks",
         value: row.meal?.overruns_estimated,
-        detail: `Pausa media ${display(
-          row.meal?.average_break_minutes, " min"
-        )}`,
+        displayValue: measurementValue(
+          row.meal, "status", "overruns_estimated"
+        ),
+        detail: cameraEventDetail(
+          row, "meal", "Duración media de todas las pausas",
+          "average_break_minutes"
+        ),
       },
       {
         label: "Alertas de dotación", tone: "alerts",
@@ -892,12 +1010,12 @@ function renderCamera(row) {
       )],
       ["Horas-persona faltantes", display(row.missing_person_hours, " h")],
       ["Método", "Estimación anónima por cupos de ocupación"],
-      ["Cobertura", display(row.data_coverage_percent, "%")],
+      ["Cobertura de turnos", display(row.data_coverage_percent, "%")],
     ]);
   } else {
     elements.cameraSummary.innerHTML = [
-      ["Ocupación promedio", display(row.average_occupancy)],
-      ["Cobertura de datos", display(row.data_coverage_percent, "%")],
+      ["Ocupación media (personas)", display(row.average_occupancy)],
+      ["Cobertura calendario", display(row.data_coverage_percent, "%")],
       ["Entradas", display(row.entries, "", 0)],
       ["Salidas", display(row.exits, "", 0)],
       ["Visitas completas", display(row.completed_visits, "", 0)],
@@ -912,6 +1030,7 @@ function renderCamera(row) {
         suffix: " personas",
         minimumMaximum: 1,
         target: false,
+        ariaLabel: "Ocupación media por hora",
       }
     );
     elements.cameraHourValues.innerHTML = (row.hourly || []).map((hour) =>
@@ -939,7 +1058,7 @@ function renderCamera(row) {
         ? "Estimación FIFO anónima" : "Línea de acceso pendiente"],
       ["Sesiones visibles", display(row.visible_sessions, "", 0)],
       ["Tiempo visible promedio", display(row.average_visible_minutes, " min")],
-      ["Cobertura", display(row.data_coverage_percent, "%")],
+      ["Cobertura calendario", display(row.data_coverage_percent, "%")],
     ]);
   }
 }

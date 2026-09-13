@@ -48,6 +48,95 @@
 
     <nav id="scope-tabs" class="scope-tabs" aria-label="Vista del reporte"></nav>
 
+    <details id="report-help" class="report-help">
+      <summary>Cómo leer este informe</summary>
+      <div class="report-help-content">
+        <section aria-labelledby="help-data-title">
+          <h2 id="help-data-title">Qué datos usa AEYE</h2>
+          <p>
+            Cada cámara aporta un conteo de personas dentro de su ROI. El conteo
+            se suaviza para evitar que una fluctuación breve cambie el resultado.
+            Un cero válido significa que no se detectaron personas; <strong>sin
+            datos</strong> significa que faltó una muestra válida por desconexión,
+            fallo de inferencia o un hueco mayor que el permitido.
+          </p>
+          <p>
+            La cobertura mide tiempo respaldado por muestras válidas, no la
+            exactitud del detector. Falsos positivos, oclusiones o una ROI mal
+            calibrada pueden afectar el conteo aunque la cobertura sea alta.
+          </p>
+        </section>
+
+        <section aria-labelledby="help-period-title">
+          <h2 id="help-period-title">Semanal y mensual</h2>
+          <dl class="help-definitions">
+            <div><dt>Ocupación respecto de la dotación</dt><dd>Horas-persona observadas divididas por las horas-persona esperadas durante el tiempo válido.</dd></div>
+            <div><dt>Cupos simultáneos esperados</dt><dd>Plazas configuradas en los puestos; no son empleados únicos ni se suman nuevamente por cada turno.</dd></div>
+            <div><dt>Dotación completa</dt><dd>Porcentaje del tiempo válido en que el conteo fue igual o mayor que los cupos esperados.</dd></div>
+            <div><dt>Horas-persona</dt><dd>Suma del conteo multiplicado por el tiempo observado. Una persona durante dos horas equivale a 2 horas-persona.</dd></div>
+            <div><dt>Horas-persona faltantes</dt><dd>Suma, durante el tiempo válido, de la diferencia positiva entre los cupos esperados y el conteo.</dd></div>
+          </dl>
+          <p>
+            El indicador principal resume todo el período. El gráfico horario
+            agrupa por hora del día y pondera cada valor por el tiempo con datos;
+            no es una evolución día por día.
+          </p>
+        </section>
+
+        <section aria-labelledby="help-events-title">
+          <h2 id="help-events-title">Llegadas, salidas, pausas y alertas</h2>
+          <dl class="help-definitions">
+            <div><dt>Llegada tarde</dt><dd>Primera aparición de cada cupo después de la tolerancia. La demora se cuenta desde el inicio del turno y el promedio incluye solo tardanzas estimadas.</dd></div>
+            <div><dt>Salida anticipada</dt><dd>Última presencia de un cupo antes del final menos la tolerancia. Un cupo ausente todo el turno no se convierte en una salida.</dd></div>
+            <div><dt>Después de hora</dt><dd>Cupo observado después de la tolerancia y dentro de la ventana máxima. El promedio se mide desde el fin del turno, por eso puede superar ampliamente una hora.</dd></div>
+            <div><dt>Pausa excedida</dt><dd>Ausencia de un cupo iniciada en la ventana de comida y mayor que la duración permitida. La pausa media mostrada considera todas las pausas estimadas, no solo las excedidas.</dd></div>
+            <div><dt>Alerta</dt><dd>Notificación emitida después de confirmar y sostener un faltante o sobrante; es un evento, no la duración del incidente.</dd></div>
+          </dl>
+          <p>
+            Estas reglas trabajan con niveles de ocupación —primer cupo, segundo
+            cupo, etc.—, no con identidades. Cambiar de track no crea por sí solo
+            una pausa, llegada o salida, y un relevo sin cambio de conteo no puede
+            demostrarse.
+          </p>
+        </section>
+
+        <section aria-labelledby="help-daily-title">
+          <h2 id="help-daily-title">Diario y estados</h2>
+          <p>
+            “Ocupación media (personas)” es el conteo medio durante el tiempo
+            válido. La distribución horaria divide el día en 24 bandas: completa
+            cuando la dotación se alcanzó al menos el 90 % del tiempo válido,
+            parcial en los demás casos y sin datos cuando la cobertura no llega
+            al 10 %.
+          </p>
+          <ul>
+            <li><strong>Estimado:</strong> la ventana tuvo evidencia suficiente.</li>
+            <li><strong>Parcial:</strong> solo algunas jornadas o turnos pudieron medirse.</li>
+            <li><strong>Pendiente:</strong> la ventana todavía no terminó.</li>
+            <li><strong>Sin datos suficientes:</strong> la ventana de control no alcanzó 80 % de cobertura.</li>
+            <li><strong>No aplica:</strong> no había turno o regla configurada para ese caso.</li>
+          </ul>
+        </section>
+
+        <section aria-labelledby="help-common-title">
+          <h2 id="help-common-title">Baño y comedor</h2>
+          <p>
+            Su cobertura se calcula sobre el tiempo calendario transcurrido, no
+            sobre horas de turno, y por eso no debe compararse directamente con
+            la cobertura de los puestos. “Línea de acceso pendiente” significa
+            que todavía falta habilitar y calibrar la línea que reconoce cruces;
+            mientras tanto puede haber ocupación visible, pero no entradas,
+            salidas ni duraciones de visita FIFO fiables.
+          </p>
+          <p>
+            Cada pestaña usa solamente la cámara seleccionada. El resumen general
+            suma eventos o pondera ocupación de los puestos; no copia un valor
+            general dentro de cada cámara ni relaciona visitas con puestos.
+          </p>
+        </section>
+      </div>
+    </details>
+
     <section id="weekly-view" aria-labelledby="weekly-title">
       <article id="weekly-sheet" class="weekly-sheet">
         <header class="report-masthead">
@@ -63,7 +152,7 @@
           <section class="report-panel overall-panel" aria-labelledby="overall-title">
             <div class="report-panel-heading">
               <p class="eyebrow">Vista general</p>
-              <h3 id="overall-title">Ocupación promedio</h3>
+              <h3 id="overall-title">Ocupación respecto de la dotación</h3>
             </div>
             <div id="overall-gauge" class="overall-gauge"></div>
             <dl id="weekly-facts" class="weekly-facts"></dl>
@@ -81,7 +170,7 @@
           <section class="report-panel trend-panel" aria-labelledby="trend-title">
             <div class="report-panel-heading">
               <p id="period-trend-label" class="eyebrow">Comportamiento semanal</p>
-              <h3 id="trend-title">Ocupación promedio por hora del día</h3>
+              <h3 id="trend-title">Ocupación respecto de la dotación por hora del día</h3>
             </div>
             <div id="hourly-chart" class="chart-wrap"></div>
           </section>
@@ -165,8 +254,8 @@
           <table>
             <thead>
               <tr>
-                <th>Puesto</th><th>Horario</th><th>Esperadas/turno</th><th>Promedio</th>
-                <th>Datos</th><th>Dotación completa</th><th>Faltantes</th>
+                <th>Puesto</th><th>Horario</th><th>Cupos simultáneos esperados</th><th>Ocupación media (personas)</th>
+                <th>Cobertura de turno</th><th>Dotación completa</th><th>Horas-persona faltantes</th>
                 <th>Llegadas tarde</th><th>Salida anticipada</th>
                 <th>Después de hora</th><th>Pausas excedidas</th><th>Alertas</th>
               </tr>
@@ -189,7 +278,7 @@
             <thead>
               <tr>
                 <th>Puesto</th><th>Turno</th><th>Estado</th>
-                <th>Datos</th><th>Promedio</th><th>Dotación completa</th>
+                <th>Cobertura de turno</th><th>Ocupación media (personas)</th><th>Dotación completa</th>
                 <th>Llegadas tarde</th><th>Salida anticipada</th>
                 <th>Pausas excedidas</th>
               </tr>
@@ -250,7 +339,7 @@
           <div class="section-heading">
             <div>
               <p class="eyebrow">Distribución horaria</p>
-              <h2 id="camera-occupancy-title">Ocupación por hora</h2>
+              <h2 id="camera-occupancy-title">Ocupación respecto de la dotación por hora</h2>
             </div>
           </div>
           <div id="camera-occupancy-chart" class="chart-wrap"></div>

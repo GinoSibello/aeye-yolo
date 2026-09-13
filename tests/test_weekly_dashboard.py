@@ -22,6 +22,35 @@ class WeeklyDashboardTest(unittest.TestCase):
         self.assertIn('id="image-download"', html)
         self.assertIn('id="pdf-print"', html)
         self.assertIn('id="download-status"', html)
+        self.assertIn('id="report-help"', html)
+        self.assertIn("<summary>Cómo leer este informe</summary>", html)
+        self.assertIn("Cupos simultáneos esperados", html)
+        self.assertIn("Horas-persona faltantes", html)
+        self.assertLess(
+            html.index('id="report-help"'),
+            html.index('id="weekly-view"'),
+        )
+
+    def test_help_explains_evidence_and_is_not_exported(self):
+        html = (STATIC_DIR / "dashboard.html").read_text(encoding="utf-8")
+        javascript = (STATIC_DIR / "dashboard.js").read_text(
+            encoding="utf-8"
+        )
+        stylesheet = (STATIC_DIR / "dashboard.css").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('aria-labelledby="help-data-title"', html)
+        self.assertIn("Sin datos suficientes:", html)
+        self.assertIn("no debe compararse directamente", html)
+        self.assertIn("function measurementValue", javascript)
+        self.assertIn("function eventEvidence", javascript)
+        self.assertIn("jornadas completas", javascript)
+        self.assertIn('"Sin datos suficientes"', javascript)
+        self.assertIn('"No aplica"', javascript)
+        self.assertIn(".report-help", stylesheet)
+        print_block = stylesheet[stylesheet.index("@media print"):]
+        self.assertIn(".report-help", print_block)
 
     def test_weekly_script_uses_api_and_native_exports(self):
         javascript = (STATIC_DIR / "dashboard.js").read_text(
@@ -38,6 +67,8 @@ class WeeklyDashboardTest(unittest.TestCase):
         self.assertIn("coverage >= 95", javascript)
         self.assertIn("function eventComparisonMarkup", javascript)
         self.assertIn("function gaugeMarkup", javascript)
+        self.assertIn("Cobertura calendario", javascript)
+        self.assertIn("Duración media de todas las pausas", javascript)
         self.assertIn("async function downloadWeeklyImage", javascript)
         self.assertIn("canvas.toBlob", javascript)
         self.assertIn("document.body.append(link)", javascript)

@@ -336,6 +336,135 @@ Un cupo no es un empleado. Si se esperan dos personas, el sistema razona sobre
 dos plazas simultáneas sin saber quién las ocupa. Si en un cambio de turno el
 conteo no varía, AEYE no puede demostrar que hubo relevo.
 
+### Cómo leer AEYE Actividad
+
+#### De la cámara al porcentaje
+
+Cada inferencia produce `raw_people_count`, que es el conteo detectado dentro de
+la ROI, y `people_count`, que es el conteo suavizado utilizado por los reportes.
+El suavizado reduce fluctuaciones breves; no convierte un track en una identidad.
+
+Las muestras se transforman en intervalos y una muestra solo se prolonga hasta
+`max_sample_gap_seconds`. Un intervalo es válido cuando `data_status` es `valid`
+y tiene conteo. Un conteo válido de cero significa “se observaron cero personas”;
+`no_data` significa “no hubo evidencia utilizable” por desconexión, fallo de
+inferencia o falta de continuidad. El tiempo `no_data` reduce cobertura y no se
+contabiliza como ausencia de personal.
+
+La cobertura responde cuánto tiempo está respaldado por datos, no si el conteo
+fue correcto. Una cobertura alta puede convivir con falsos positivos, falsos
+negativos, oclusiones o una ROI mal calibrada. La exactitud se evalúa aparte,
+comparando muestras con conteos manuales mediante la auditoría visual.
+
+| Indicador | Unidad y cálculo | Período aplicable | Qué no demuestra |
+| --- | --- | --- | --- |
+| Ocupación media | Personas: suma de `conteo × tiempo válido` dividida por el tiempo válido | Turnos en puestos; tiempo calendario en áreas comunes | Personas únicas |
+| Ocupación respecto de la dotación | Porcentaje: `horas-persona observadas / horas-persona esperadas × 100` | Tiempo válido de puestos con dotación configurada | Identidad o asistencia individual |
+| Cupos simultáneos esperados | Personas simultáneas configuradas por puesto; el general suma los puestos | Cada turno activo usa el cupo del puesto | Suma de empleados únicos de todos los turnos |
+| Cobertura de turnos | Porcentaje: `tiempo válido / tiempo de turno aplicable × 100` | Puestos; el día en curso termina en la hora real | Exactitud del detector |
+| Cobertura calendario | Porcentaje: `tiempo válido / tiempo calendario transcurrido × 100` | Baño y comedor | Comparabilidad directa con cobertura de turnos |
+| Dotación completa | Porcentaje: tiempo válido con `conteo >= esperado` dividido por todo el tiempo válido | Puesto o conjunto de puestos | Que siempre estuvieron las mismas personas |
+| Horas-persona | Horas: suma de `conteo × tiempo válido` | Tiempo válido | Horas contractuales o personas únicas |
+| Horas-persona faltantes | Horas: suma de `máximo(0, esperado - conteo) × tiempo válido` | Tiempo válido con dotación configurada | Causa del faltante |
+| Distribución horaria | Promedio ponderado por tiempo válido dentro de cada una de las 24 horas del día | Días incluidos en el informe | Una evolución día por día |
+
+Los porcentajes generales se ponderan por tiempo y cupo; no son un promedio
+simple de los porcentajes visibles de cada cámara. La pestaña de una cámara usa
+solo datos de esa cámara. El resumen general suma eventos y horas, o pondera
+ocupación, pero no copia un resultado general en cada puesto.
+
+#### Ejemplo ficticio y comprobable
+
+Supóngase un puesto con 2 cupos y un período aplicable de 5 horas:
+
+| Intervalo | Estado | Conteo |
+| --- | --- | --- |
+| 2 horas | válido | 2 |
+| 1 hora | válido | 1 |
+| 1 hora | válido | 0 |
+| 1 hora | `no_data` | desconocido |
+
+El tiempo válido es 4 horas, por lo que la cobertura es `4 / 5 = 80 %`. Las
+horas-persona son `(2 × 2) + (1 × 1) + (0 × 1) = 5`. Durante las 4 horas válidas
+se esperaban `2 × 4 = 8` horas-persona, así que la ocupación respecto de la
+dotación es `5 / 8 = 62,5 %`. La dotación estuvo completa 2 de las 4 horas
+válidas: `50 %`. Las horas-persona faltantes son
+`(2 - 1) × 1 + (2 - 0) × 1 = 3`.
+
+#### Llegadas, salidas y pausas
+
+Estas métricas recorren niveles de ocupación anónimos. Con dotación 2, “cupo 1”
+significa que el conteo llegó al menos a 1 y “cupo 2” que llegó al menos a 2.
+No siguen un `track_id`, no identifican empleados y no vinculan un faltante con
+una visita a baño o comedor.
+
+- **Llegada tarde:** primera presencia de cada cupo dentro del turno. Cuenta
+  como tardía si ocurre después de `arrival_grace_minutes`. La demora se mide
+  desde el inicio del turno, no desde el final de la tolerancia, y el promedio
+  incluye solamente los cupos clasificados como tardíos. Un cupo que nunca
+  aparece se informa como ausente, no como tardanza.
+- **Salida anticipada:** última presencia de cada cupo dentro del turno. Cuenta
+  cuando termina antes de `shift_end - early_departure_tolerance_minutes`.
+  Un cupo que estuvo ausente todo el turno no se inventa como salida.
+- **Después de hora:** para el último turno del día se observa desde
+  `shift_end + overtime_tolerance_minutes` hasta
+  `shift_end + overtime_observation_minutes`. Si un cupo aparece en esa ventana,
+  su duración se calcula desde el fin del turno hasta su última presencia. Por
+  eso un valor como 114 minutos significa “última presencia estimada 114 minutos
+  después del fin”, no “114 minutos por encima de la tolerancia”.
+- **Pausa de comida:** ausencia de un cupo que estaba presente antes y cuya
+  ausencia comienza dentro de la ventana de comida. Ausencias separadas por
+  hasta `absence_merge_gap_minutes` se unen. Es excedida cuando dura más que
+  `meal_allowed_minutes`. La duración media del dashboard incluye todas las
+  pausas estimadas, aunque se muestre junto al conteo de pausas excedidas.
+
+Una pausa estimada puede deberse a que alguien salió de la ROI, pero también a
+oclusión, subconteo o una ROI inadecuada. No prueba que una persona concreta
+haya ido a comer. Un cambio de ID del tracker no crea por sí mismo una pausa,
+porque estas reglas usan el conteo total; sí puede afectar indirectamente si el
+cambio produce un conteo incorrecto.
+
+Para emitir estas estimaciones se exige al menos 80 % de cobertura: los primeros
+15 minutos del turno para llegadas, los últimos 15 para salidas anticipadas, los
+primeros 15 minutos de la ventana posterior a la tolerancia para después de hora
+y toda la ventana configurada para comida.
+
+#### Estados de evidencia
+
+| Estado visible | Significado |
+| --- | --- |
+| Estimado | La ventana terminó y tuvo evidencia suficiente |
+| Parcial | Solo algunas jornadas o turnos del período pudieron estimarse |
+| Pendiente | La ventana relevante todavía no terminó |
+| Sin datos suficientes | La ventana terminó pero no alcanzó el 80 % de cobertura requerido |
+| No aplica | No existía turno, horario de comida o regla configurada para ese caso |
+
+En un período semanal o mensual, `X/Y jornadas completas` muestra cuántas
+jornadas aportaron una estimación completa para ese evento. Un promedio basado
+en pocas jornadas debe leerse con más cautela aunque el número sea válido.
+
+#### Alertas, baño y comedor
+
+Las alertas cuentan notificaciones efectivamente emitidas, no minutos de
+faltante. El conteo se suaviza durante `smoothing_window_seconds`; una condición
+fuera del rango se confirma tras `incident_confirmation_seconds` y, si continúa,
+se alerta después de `alert_after_seconds`. La vuelta al rango se confirma
+durante `recovery_confirmation_seconds`. El dashboard separa faltantes y
+sobrantes; la duración del incidente es otro dato.
+
+Baño y comedor se calculan de forma independiente y sobre tiempo calendario
+transcurrido. Esa cobertura suele diferir de la cobertura de turnos aun cuando
+las cámaras funcionen de la misma manera. Si aparece “Línea de acceso pendiente”,
+la cámara todavía no tiene una línea habilitada y calibrada para registrar
+cruces. Puede mostrar ocupación y sesiones visibles, pero entradas, salidas y
+duraciones de visita quedan pendientes. Cuando se habilita, las visitas se
+emparejan en orden FIFO y siguen siendo estimaciones anónimas, sensibles a
+cruces simultáneos, oclusiones, varias puertas y reinicios.
+
+Los reportes históricos se interpretan con la configuración materializada
+actual. Horarios, cupos o roles anteriores no están versionados todavía; cambiar
+la configuración puede cambiar la lectura de datos históricos.
+
 En el día actual, la cobertura usa solo el tiempo laboral transcurrido. Cada
 turno distingue not_started, in_progress y complete; un evento cuya ventana no
 terminó queda pending. Falta de configuración, falta de evidencia y conteo cero

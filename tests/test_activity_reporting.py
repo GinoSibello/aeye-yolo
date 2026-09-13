@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from database.repository import Repository
-from metrics.activity import ActivityAnalytics
+from metrics.activity import ActivityAnalytics, _aggregate, _ratio
 from metrics.weekly import WeeklyActivityAnalytics
 from metrics.reporting_config import (
     camera_reporting,
@@ -84,6 +84,34 @@ class ActivityReportingTest(unittest.TestCase):
                 2, 2, "valid", "ok" if count == 2 else "missing",
             )
             current += timedelta(minutes=1)
+
+    def test_documented_occupancy_example_matches_report_formulas(self):
+        start = datetime(2026, 8, 10, 8, tzinfo=timezone.utc)
+        intervals = []
+        for offset, hours, valid, count in (
+            (0, 2, True, 2),
+            (2, 1, True, 1),
+            (3, 1, True, 0),
+            (4, 1, False, None),
+        ):
+            interval_start = start + timedelta(hours=offset)
+            intervals.append({
+                "start": interval_start,
+                "end": interval_start + timedelta(hours=hours),
+                "seconds": hours * 3600,
+                "valid": valid,
+                "count": count,
+            })
+
+        result = _aggregate(
+            intervals, start, start + timedelta(hours=5), expected=2
+        )
+
+        self.assertEqual(result["data_coverage_percent"], 80.0)
+        self.assertEqual(result["person_hours"], 5.0)
+        self.assertEqual(result["staffing_coverage_percent"], 50.0)
+        self.assertEqual(result["missing_person_hours"], 3.0)
+        self.assertEqual(_ratio(result["average_occupancy"], 2), 62.5)
 
     def test_daily_report_estimates_schedule_events_without_identity(self):
         self.record_day()
