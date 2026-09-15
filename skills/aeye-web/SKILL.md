@@ -32,6 +32,12 @@ Es HTML/CSS/JavaScript sin pipeline npm ni framework de componentes.
 SVG foreignObject y canvas; el nombre historico no implica soporte de todas
 las vistas. Inspeccionar que DOM y periodo exporta realmente.
 PDF usa `window.print()`: el usuario elige guardar PDF.
+Incluye el resumen general y los detalles con gráficos de todas las cámaras
+del período seleccionado (semanal o mensual). `buildPrintCameraReports` reutiliza
+`renderCamera` con copias independientes; `afterprint` elimina esas copias.
+Los estilos de impresión muestran todos los valores horarios sin scroll y
+comienzan el detalle de cada cámara en una página nueva. La hoja es A4 vertical;
+el título temporal del documento sugiere el nombre del PDF según el período.
 Los archivos se guardan en el equipo del navegador, no en una carpeta del servidor.
 Comprobar fuentes, CSS embebido, imagenes same-origin, permisos de descarga y
 URL de blobs; capturar errores visibles. No introducir CDNs innecesarios en LAN.

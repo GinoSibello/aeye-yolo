@@ -1512,9 +1512,13 @@ td:nth-child(2) {
   }
 }
 
+#print-camera-reports {
+  display: none;
+}
+
 @page {
   margin: 8mm;
-  size: A4 landscape;
+  size: A4 portrait;
 }
 
 @media print {
@@ -1549,12 +1553,124 @@ td:nth-child(2) {
     display: block !important;
   }
 
+  .printing-weekly #print-camera-reports {
+    display: block;
+  }
+
+  .print-camera-sheet {
+    break-before: page;
+  }
+
+  .print-camera-sheet .camera-heading,
+  .print-camera-sheet .camera-metrics,
+  .print-camera-sheet .camera-layout .section {
+    break-inside: avoid;
+  }
+
+  .print-camera-sheet .camera-heading {
+    margin-bottom: 8px;
+    padding: 8px;
+  }
+
+  .print-camera-sheet .camera-heading h2 {
+    font-size: 18px;
+  }
+
+  .print-camera-sheet .camera-metrics {
+    gap: 6px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-bottom: 8px;
+  }
+
+  .print-camera-sheet .camera-layout {
+    gap: 8px;
+    grid-template-columns: 1fr;
+  }
+
+  .print-camera-sheet .camera-layout .section {
+    padding: 8px;
+  }
+
+  .print-camera-sheet .section-heading {
+    margin-bottom: 6px;
+  }
+
+  .print-camera-sheet .section-heading h2 {
+    font-size: 13px;
+  }
+
+  .print-camera-sheet .camera-occupancy-panel,
+  .print-camera-sheet .camera-daily-panel,
+  .print-camera-sheet .camera-events-panel,
+  .print-camera-sheet .camera-audit-panel {
+    grid-column: 1 / -1;
+  }
+
+  .print-camera-sheet .hour-values {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    overflow: visible;
+  }
+
+  .print-camera-sheet .hour-values > div {
+    min-height: 0;
+    padding: 3px;
+  }
+
+  .print-camera-sheet .event-bar-row strong {
+    white-space: normal;
+  }
+
+  .print-camera-sheet .daily-columns {
+    min-height: 120px;
+    overflow: visible;
+  }
+
+  .print-camera-sheet .daily-column {
+    flex: 1 1 0;
+    grid-template-rows: 90px auto;
+    min-width: 0;
+  }
+
+  .print-camera-sheet .daily-bars {
+    height: 90px;
+  }
+
+  .print-camera-sheet .daily-bars i {
+    min-width: 2px;
+    width: 20%;
+  }
+
+  .print-camera-sheet .daily-column time {
+    font-size: 8px;
+    overflow-wrap: anywhere;
+  }
+
+  .print-camera-sheet .camera-audit > div {
+    padding: 5px 0;
+  }
+
   .weekly-sheet {
     border: 0;
     box-shadow: none;
     max-width: none;
     padding: 0;
     width: 100%;
+  }
+
+  .overall-panel {
+    grid-column: span 5;
+  }
+
+  .workstation-gauges-panel {
+    grid-column: span 7;
+  }
+
+  .trend-panel,
+  .events-panel,
+  .event-comparison-panel,
+  .ranking-panel,
+  .common-panel {
+    grid-column: span 12;
   }
 
   .report-masthead {

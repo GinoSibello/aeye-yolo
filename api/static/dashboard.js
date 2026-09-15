@@ -72,6 +72,7 @@ let selectedCameraId = "general";
 let latestReport = null;
 let latestWeeklyReport = null;
 let downloadStatusTimer = null;
+let printDocumentTitle = null;
 
 function localISODate(value = new Date()) {
   const offset = value.getTimezoneOffset() * 60000;
@@ -192,6 +193,17 @@ function formatRange(report) {
     year: "numeric",
   });
   return startValue === endValue ? end : `${start} al ${end}`;
+}
+
+function pdfFilename(report) {
+  const startValue = report.period_start || report.week_start || report.date;
+  const endValue = report.period_end || report.week_end || report.date;
+  const compactDate = (value) => {
+    const [year, month, day] = String(value || "").split("-");
+    return year && month && day ? `${day}-${month}` : "fecha-pendiente";
+  };
+  const periodName = report.period === "monthly" ? "Mensual" : "Semanal";
+  return `Reporte_${periodName}_${compactDate(startValue)}_${compactDate(endValue)}.pdf`;
 }
 
 function metric(label, value, tone = "") {
@@ -899,23 +911,23 @@ function auditMarkup(items) {
   ).join("");
 }
 
-function renderCamera(row) {
+function renderCamera(row, report = latestReport, target = elements) {
   const workstation = row.role === "workstation";
   const alerts = row.alerts || { total: 0, missing: 0, extra: 0 };
-  elements.cameraRole.textContent =
+  target.cameraRole.textContent =
     `${roleName(row.role)} · ${row.camera_id} · ${row.zone}`;
-  elements.cameraTitle.textContent = row.name;
-  elements.cameraPeriod.textContent = formatRange(latestReport);
-  elements.cameraStatus.className =
+  target.cameraTitle.textContent = row.name;
+  target.cameraPeriod.textContent = formatRange(report);
+  target.cameraStatus.className =
     `status ${row.configuration_status || "pending"}`;
-  elements.cameraStatus.textContent =
+  target.cameraStatus.textContent =
     statusText[row.configuration_status] || row.configuration_status;
-  elements.cameraOccupancyTitle.textContent = workstation
+  target.cameraOccupancyTitle.textContent = workstation
     ? "Ocupación respecto de la dotación por hora"
     : "Ocupación media por hora";
 
   if (workstation) {
-    elements.cameraSummary.innerHTML = [
+    target.cameraSummary.innerHTML = [
       ["Ocupación respecto de la dotación", display(row.occupancy_percent, "%")],
       ["Cupos simultáneos esperados", display(row.expected_people, "", 0)],
       ["Cobertura de turnos", display(row.data_coverage_percent, "%")],
@@ -935,15 +947,15 @@ function renderCamera(row) {
     ].map(([label, value]) => metric(label, value)).join("");
 
     const hourly = workstationHourly(row);
-    elements.cameraOccupancyChart.innerHTML = chartMarkup(hourly);
-    elements.cameraHourValues.innerHTML = hourly.map((hour) =>
+    target.cameraOccupancyChart.innerHTML = chartMarkup(hourly);
+    target.cameraHourValues.innerHTML = hourly.map((hour) =>
       `<div><time>${escapeHTML(hour.hour)}</time><strong>${escapeHTML(
         display(hour.occupancy_percent, "%")
       )}</strong><small>Cobertura ${escapeHTML(
         display(hour.data_coverage_percent, "%")
       )}</small></div>`
     ).join("");
-    elements.cameraEvents.innerHTML = eventBarsMarkup([
+    target.cameraEvents.innerHTML = eventBarsMarkup([
       {
         label: "Llegadas tarde", tone: "late",
         value: row.arrival?.late_arrivals_estimated,
@@ -998,9 +1010,9 @@ function renderCamera(row) {
         detail: `${alerts.missing} faltantes · ${alerts.extra} sobrantes`,
       },
     ]);
-    elements.cameraDailyEvents.innerHTML =
-      dailyEventChart(cameraDailyRows(row, latestReport));
-    elements.cameraAudit.innerHTML = auditMarkup([
+    target.cameraDailyEvents.innerHTML =
+      dailyEventChart(cameraDailyRows(row, report));
+    target.cameraAudit.innerHTML = auditMarkup([
       ["Turnos", scheduleText(row)],
       ["Tolerancia de llegada", display(
         row.arrival_grace_minutes, " min"
@@ -1013,7 +1025,7 @@ function renderCamera(row) {
       ["Cobertura de turnos", display(row.data_coverage_percent, "%")],
     ]);
   } else {
-    elements.cameraSummary.innerHTML = [
+    target.cameraSummary.innerHTML = [
       ["Ocupación media (personas)", display(row.average_occupancy)],
       ["Cobertura calendario", display(row.data_coverage_percent, "%")],
       ["Entradas", display(row.entries, "", 0)],
@@ -1023,7 +1035,7 @@ function renderCamera(row) {
       ["Percentil 95", display(row.p95_visit_minutes, " min")],
       ["Alertas emitidas", display(alerts.total, "", 0)],
     ].map(([label, value]) => metric(label, value)).join("");
-    elements.cameraOccupancyChart.innerHTML = chartMarkup(
+    target.cameraOccupancyChart.innerHTML = chartMarkup(
       row.hourly || [],
       {
         valueKey: "average_occupancy",
@@ -1033,12 +1045,12 @@ function renderCamera(row) {
         ariaLabel: "Ocupación media por hora",
       }
     );
-    elements.cameraHourValues.innerHTML = (row.hourly || []).map((hour) =>
+    target.cameraHourValues.innerHTML = (row.hourly || []).map((hour) =>
       `<div><time>${escapeHTML(hour.hour)}</time><strong>${escapeHTML(
         display(hour.average_occupancy)
       )}</strong><small>personas</small></div>`
     ).join("");
-    elements.cameraEvents.innerHTML = eventBarsMarkup([
+    target.cameraEvents.innerHTML = eventBarsMarkup([
       { label: "Entradas", value: row.entries, tone: "late", detail: "" },
       { label: "Salidas", value: row.exits, tone: "early", detail: "" },
       {
@@ -1050,9 +1062,9 @@ function renderCamera(row) {
         tone: "alerts", detail: "No son eventos de llegada laboral",
       },
     ]);
-    elements.cameraDailyEvents.innerHTML =
+    target.cameraDailyEvents.innerHTML =
       '<p class="empty">La evolución diaria de visitas estará disponible cuando la línea de acceso esté configurada y genere cruces.</p>';
-    elements.cameraAudit.innerHTML = auditMarkup([
+    target.cameraAudit.innerHTML = auditMarkup([
       ["Tipo de cámara", roleName(row.role)],
       ["Medición de visitas", row.visit_measurement === "fifo_estimate"
         ? "Estimación FIFO anónima" : "Línea de acceso pendiente"],
@@ -1254,16 +1266,67 @@ async function downloadWeeklyImage() {
   }
 }
 
+function clearPrintReport() {
+  document.body.classList.remove("printing-weekly");
+  document.querySelector("#print-camera-reports")?.remove();
+  if (printDocumentTitle !== null) {
+    document.title = printDocumentTitle;
+    printDocumentTitle = null;
+  }
+}
+
+function buildPrintCameraReports(report) {
+  const container = document.createElement("div");
+  container.id = "print-camera-reports";
+  reportCameras(report).forEach((row, index) => {
+    const sheet = elements.cameraView.cloneNode(true);
+    sheet.classList.remove("hidden");
+    sheet.classList.add("print-camera-sheet");
+    const target = {};
+    Object.entries(elements).forEach(([key, element]) => {
+      if (element && elements.cameraView.contains(element)) {
+        target[key] = element === elements.cameraView
+          ? sheet : sheet.querySelector(`#${element.id}`);
+      }
+    });
+    renderCamera(row, report, target);
+    // Keep labels local to each copy and avoid duplicate IDs in the document.
+    const prefix = `print-camera-${index}-`;
+    [sheet, ...sheet.querySelectorAll("[id]")].forEach((element) => {
+      element.id = prefix + element.id;
+    });
+    [sheet, ...sheet.querySelectorAll("[aria-labelledby]")].forEach((element) => {
+      const labels = element.getAttribute("aria-labelledby");
+      if (labels) {
+        element.setAttribute("aria-labelledby",
+          labels.split(/\s+/).map((id) => prefix + id).join(" "));
+      }
+    });
+    container.append(sheet);
+  });
+  return container;
+}
+
 function printWeeklyReport() {
   if (!latestWeeklyReport) return;
+  clearPrintReport();
+  const filename = pdfFilename(latestWeeklyReport);
+  printDocumentTitle = document.title;
+  document.title = filename.slice(0, -4);
+  document.querySelector("main").append(
+    buildPrintCameraReports(latestWeeklyReport)
+  );
   showDownloadStatus(
-    "Se abrió la impresión. Elija Guardar como PDF y seleccione una carpeta."
+    `Se abrió la impresión. El nombre sugerido es ${filename}.`
   );
   document.body.classList.add("printing-weekly");
-  window.print();
-  window.setTimeout(() => {
-    document.body.classList.remove("printing-weekly");
-  }, 500);
+  try {
+    window.print();
+  } catch (error) {
+    clearPrintReport();
+    elements.error.textContent = `No se pudo abrir la impresión: ${error.message}`;
+    elements.error.classList.remove("hidden");
+  }
 }
 
 elements.date.value = localISODate();
@@ -1274,9 +1337,7 @@ elements.date.addEventListener("change", loadReport);
 elements.refresh.addEventListener("click", loadReport);
 elements.image.addEventListener("click", downloadWeeklyImage);
 elements.pdf.addEventListener("click", printWeeklyReport);
-window.addEventListener("afterprint", () => {
-  document.body.classList.remove("printing-weekly");
-});
+window.addEventListener("afterprint", clearPrintReport);
 
 setMode("weekly", false);
 loadReport();

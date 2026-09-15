@@ -487,7 +487,8 @@ alerts.mode es webhook, también se envían por HTTP POST.
 El dashboard muestra períodos diarios, semanales de lunes a domingo y meses
 calendario. Incluye una vista general y detalle por cámara, ocupación horaria,
 cobertura, eventos y evolución. La exportación semanal/mensual ofrece PNG; la
-opción PDF usa la impresión A4 horizontal del navegador.
+opción PDF usa la impresión A4 vertical del navegador: primero muestra el
+resumen general y después el detalle de cada cámara en el orden de las pestañas.
 
 Rutas de reportes:
 

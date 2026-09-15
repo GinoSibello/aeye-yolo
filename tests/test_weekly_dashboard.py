@@ -74,8 +74,24 @@ class WeeklyDashboardTest(unittest.TestCase):
         self.assertIn("document.body.append(link)", javascript)
         self.assertIn("Descarga iniciada", javascript)
         self.assertIn("window.print()", javascript)
+        self.assertIn("function pdfFilename", javascript)
+        self.assertIn(
+            "Reporte_${periodName}_${compactDate(startValue)}_"
+            "${compactDate(endValue)}.pdf",
+            javascript,
+        )
+        self.assertIn("document.title = filename.slice(0, -4)", javascript)
+        self.assertIn("document.title = printDocumentTitle", javascript)
+        self.assertIn("function buildPrintCameraReports", javascript)
+        self.assertIn("reportCameras(report).forEach", javascript)
+        self.assertIn("renderCamera(row, report, target)", javascript)
+        self.assertIn("window.addEventListener(\"afterprint\", clearPrintReport)", javascript)
+        self.assertIn("#print-camera-reports", stylesheet)
+        self.assertIn(".print-camera-sheet", stylesheet)
+        self.assertIn("break-before: page", stylesheet)
         self.assertIn("@page", stylesheet)
-        self.assertIn("size: A4 landscape", stylesheet)
+        self.assertIn("size: A4 portrait", stylesheet)
+        self.assertNotIn("size: A4 landscape", stylesheet)
 
 
 if __name__ == "__main__":
