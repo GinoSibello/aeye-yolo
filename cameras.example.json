@@ -21,6 +21,18 @@
       "copy_latest_frame": false,
       "result_transfer": "packed"
     },
+    "dataset_capture": {
+      "enabled": false,
+      "root": "datasets/aeye_capture",
+      "sample_fps": 2.0,
+      "pre_seconds": 2.0,
+      "post_seconds": 2.0,
+      "prolonged_interval_seconds": 10.0,
+      "audit_interval_seconds": 300.0,
+      "quota_per_camera": 500,
+      "queue_size": 64,
+      "min_free_gb": 5.0
+    },
     "smoothing_window_seconds": 10,
     "incident_confirmation_seconds": 30,
     "recovery_confirmation_seconds": 15,

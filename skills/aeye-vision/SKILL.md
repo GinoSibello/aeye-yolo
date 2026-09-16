@@ -9,7 +9,9 @@ description: Cambiar o perfilar captura, inferencia Python/YOLO/TensorRT, batchi
 `main.py` coordina; `vision/capture.py` obtiene frames;
 `detector.py` carga/valida engine y convierte resultados; `batching.py`
 agrupa; `tracker.py` mantiene tracks; `regions.py` aplica geometria;
-`pipeline.py` configura transferencias/snapshots.
+`pipeline.py` configura transferencias/snapshots;
+`dataset_capture.py` selecciona evidencia inferida y escribe fuera del ciclo;
+`tools/export_capture_batch.py` arma lotes incrementales locales.
 Leer llamadores y tests: no sustituir APIs locales por ejemplos genericos YOLO.
 
 ## Invariantes
@@ -21,6 +23,8 @@ Leer llamadores y tests: no sustituir APIs locales por ejemplos genericos YOLO.
 - Tracker independiente por camara, secuencia cronologica y manejo de reconexion.
   ByteTrack y sus IDs no identifican empleados ni unen distintas camaras.
 - Snapshots compartidos no deben mutarse desde dibujo/preview o preprocesado.
+- El dataset opcional recibe solo frames devueltos por `detect_batch`, antes de
+  ROI/tracking/overlay; JPEG, disco y exportacion no deben bloquear inferencia.
 - Conservar timestamps y estados invalidos hasta las metricas. Una falla de
   inferencia no equivale a cero personas.
 - ROI y lineas tienen coordenadas normalizadas; comprobar convencion geometrica
@@ -45,6 +49,8 @@ python3 -m unittest discover -s tests -p 'test_tracker.py' -v
 python3 -m unittest discover -s tests -p 'test_capture.py' -v
 python3 -m unittest discover -s tests -p 'test_pipeline.py' -v
 python3 -m unittest discover -s tests -p 'test_regions.py' -v
+python3 -m unittest discover -s tests -p 'test_dataset_capture.py' -v
+python3 -m unittest discover -s tests -p 'test_export_capture_batch.py' -v
 ```
 Las pruebas simuladas no validan el engine en esta Jetson. Reportar por separado
 pruebas de logica y mediciones de hardware con configuracion reproducible.

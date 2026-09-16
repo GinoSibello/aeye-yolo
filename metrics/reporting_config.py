@@ -321,9 +321,9 @@ def prepare_cameras(config):
     return rows
 
 
-def staffing_active(settings, at=None):
-    """Indica si una regla de dotacion debe vigilarse en este instante."""
-    if settings["role"] != "workstation" or not settings.get("shifts"):
+def within_work_shift(settings, at=None):
+    """Indica si el instante pertenece a un turno de un dia laborable."""
+    if not settings.get("shifts"):
         return False
     current = at or datetime.now().astimezone()
     local = current.astimezone(ZoneInfo(settings["timezone"]))
@@ -349,6 +349,11 @@ def staffing_active(settings, at=None):
             if start <= local < end:
                 return True
     return False
+
+
+def staffing_active(settings, at=None):
+    """Indica si una regla de dotacion debe vigilarse en este instante."""
+    return settings["role"] == "workstation" and within_work_shift(settings, at)
 
 
 def sync_reporting_configuration(repository, config, at=None):

@@ -7,7 +7,7 @@ import time
 import threading
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -19,6 +19,7 @@ from metrics.reporting_config import (
     prepare_cameras,
     staffing_active,
     sync_reporting_configuration,
+    within_work_shift,
 )
 from metrics.staffing import StaffingStateMachine
 from preview.state import build_preview_payload
@@ -29,6 +30,10 @@ from vision.detector import (
     load_detector,
     normalize_image_size,
     validate_engine_for_batching,
+)
+from vision.dataset_capture import (
+    DatasetCaptureCollector,
+    parse_dataset_capture_settings,
 )
 from vision.pipeline import frame_snapshot, parse_pipeline_settings
 from vision.regions import AccessLineTracker, tracks_in_roi
@@ -462,10 +467,12 @@ def main():
     capture_cfg = system_cfg.get("capture", {})
     batching_settings = parse_batching_settings(system_cfg)
     pipeline_settings = parse_pipeline_settings(system_cfg)
+    dataset_capture_settings = parse_dataset_capture_settings(system_cfg)
     repository = None
     metrics_recorder = None
     access_recorder = None
     reporting_rows = None
+    dataset_collector = None
     if database_cfg.get("enabled", True):
         db_path = os.environ.get("AEYE_DB_PATH", database_cfg.get("path", str(LOG_DIR / "aeye.db")))
         repository = Repository(db_path)
@@ -511,6 +518,11 @@ def main():
         "batching_timeout_ms": batching_settings.timeout_ms,
         "copy_latest_frame": pipeline_settings.copy_latest_frame,
         "result_transfer": pipeline_settings.result_transfer,
+        "dataset_capture_enabled": dataset_capture_settings.enabled,
+        "dataset_capture_queue_size": dataset_capture_settings.queue_size,
+        "dataset_capture_quota_per_camera": (
+            dataset_capture_settings.quota_per_camera
+        ),
     }
 
     engine_capabilities = validate_engine_for_batching(
@@ -528,6 +540,21 @@ def main():
         f"batching={batching_settings.enabled} "
         f"batch_max={batching_settings.max_batch_size}"
     )
+    if dataset_capture_settings.enabled:
+        try:
+            dataset_collector = DatasetCaptureCollector(
+                dataset_capture_settings,
+                engine=system_cfg["tensorrt_engine"],
+                confidence=system_cfg["confidence"],
+                logger=log,
+            )
+            log(
+                "Captura de dataset habilitada en "
+                f"{dataset_collector.root} "
+                f"cuota={dataset_capture_settings.quota_per_camera}/camara"
+            )
+        except Exception as error:
+            log(f"Captura de dataset no iniciada: {type(error).__name__}: {error}")
 
     readers = {}
     trackers = {}
@@ -674,6 +701,13 @@ def main():
                     "frame": frame,
                     "seq": seq,
                     "captured_at": captured_at,
+                    "captured_wall_at": (
+                        datetime.now().astimezone() - timedelta(
+                            seconds=max(0.0, time.monotonic() - captured_at)
+                        )
+                        if captured_at is not None
+                        else datetime.now().astimezone()
+                    ),
                     "process_started": time.monotonic(),
                     "frame_snapshot_ms": snapshot_ms,
                     "schedule_lag_ms": schedule_lags[cam_id],
@@ -711,6 +745,18 @@ def main():
                 frame = item["frame"]
                 seq = item["seq"]
                 captured_at = item["captured_at"]
+                captured_wall_at = item["captured_wall_at"]
+                if dataset_collector:
+                    dataset_collector.observe(
+                        cam_id,
+                        seq,
+                        captured_wall_at,
+                        frame,
+                        detections,
+                        audit_allowed=within_work_shift(
+                            reporting_by_id[cam_id], captured_wall_at
+                        ),
+                    )
                 try:
                     tracker_started = time.perf_counter()
                     all_tracks = trackers[cam_id].update(detections, frame.shape)
@@ -883,6 +929,13 @@ def main():
         dashboard.shutdown()
         for reader in readers.values():
             reader.join(timeout=2)
+        if dataset_collector:
+            drained = dataset_collector.close(timeout=5)
+            capture_status = dataset_collector.snapshot()
+            log(
+                f"Captura de dataset cerrada: drenada={drained} "
+                f"guardadas={capture_status['saved']}"
+            )
         try:
             written_path = performance_monitor.write(
                 performance_path, readers, performance_configuration

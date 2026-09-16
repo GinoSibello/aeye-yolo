@@ -232,6 +232,60 @@ Los umbrales deben calibrarse con escenas reales. Un valor bajo puede ayudar a
 ByteTrack a recuperar trayectorias débiles, pero no debe aprobarse solo porque
 mejore recall en un dataset general.
 
+### Recoleccion opcional de dataset
+
+El recolector esta deshabilitado de forma predeterminada. Solo observa frames
+que regresaron correctamente de `detect_batch`; toma las propuestas directas de
+persona antes de ROI y tracking, y conserva el frame original sin overlay. La
+codificacion JPEG y las escrituras se ejecutan en un hilo separado con una cola
+limitada, por lo que una cola llena descarta la muestra y no espera en el ciclo
+de inferencia.
+
+~~~json
+"dataset_capture": {
+  "enabled": false,
+  "root": "datasets/aeye_capture",
+  "sample_fps": 2.0,
+  "pre_seconds": 2.0,
+  "post_seconds": 2.0,
+  "prolonged_interval_seconds": 10.0,
+  "audit_interval_seconds": 300.0,
+  "quota_per_camera": 500,
+  "queue_size": 64,
+  "min_free_gb": 5.0
+}
+~~~
+
+Cada evento guarda dos segundos previos y posteriores a 2 FPS, una muestra
+inicial, reapariciones dentro del contexto posterior y una muestra cada diez
+segundos de presencia prolongada. La auditoria de cinco minutos solo corre
+dentro de los `workdays` y `shifts` efectivos de cada camara, incluida la
+pertenencia al dia laboral cuando el turno cruza medianoche.
+
+Los JPEG usan calidad 92. La metadata JSON separada contiene camara, timestamp,
+secuencia, evento anonimo, motivo, engine, umbral y cajas/confianzas del modelo;
+no guarda URL, IP, credenciales ni identidad. El indice persistente deduplica
+por sesion/camara/secuencia y SHA-256, conserva la cuota entre reinicios y
+registra en `status.json` si el recolector se detuvo por poco disco o por un
+error de escritura. Ese freno afecta solo al dataset: la inferencia continua.
+
+`datasets/` esta fuera de Git. Para habilitarlo, editar el
+`cameras.json` local, cambiar unicamente `dataset_capture.enabled` a
+`true`, validar el JSON y reiniciar el runtime en una ventana coordinada. El
+proceso carga configuracion al arrancar; `run.sh` no recrea ni reinicia un
+contenedor que ya esta corriendo.
+
+Los lotes para anotacion son incrementales:
+
+~~~bash
+python3 tools/export_capture_batch.py
+~~~
+
+El comando crea un ZIP bajo `datasets/aeye_capture/exports/` con imagenes
+nuevas, metadata, `manifest.jsonl`, `SHA256SUMS` y un checksum SHA-256
+lateral del ZIP. Solo avanza `export_state.json` despues de completar el
+archivo.
+
 ### Variables de entorno
 
 | Variable | Valor predeterminado |
