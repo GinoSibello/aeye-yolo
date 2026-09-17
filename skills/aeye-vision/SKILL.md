@@ -11,6 +11,7 @@ description: Cambiar o perfilar captura, inferencia Python/YOLO/TensorRT, batchi
 agrupa; `tracker.py` mantiene tracks; `regions.py` aplica geometria;
 `pipeline.py` configura transferencias/snapshots;
 `dataset_capture.py` selecciona evidencia inferida y escribe fuera del ciclo;
+`alert_evidence.py` conserva y persiste JPEG alrededor de alertas de faltantes;
 `tools/export_capture_batch.py` arma lotes incrementales locales.
 Leer llamadores y tests: no sustituir APIs locales por ejemplos genericos YOLO.
 
@@ -25,6 +26,11 @@ Leer llamadores y tests: no sustituir APIs locales por ejemplos genericos YOLO.
 - Snapshots compartidos no deben mutarse desde dibujo/preview o preprocesado.
 - El dataset opcional recibe solo frames devueltos por `detect_batch`, antes de
   ROI/tracking/overlay; JPEG, disco y exportacion no deben bloquear inferencia.
+  Sus cuotas recurrentes son por camara y ventana laboral, no un limite historico.
+- La evidencia de alertas recibe frames originales que completaron inferencia y
+  conserva por camara un buffer comprimido. Solo una alerta emitida con
+  `kind=missing` inicia el tramo posterior; compresion y escritura usan colas
+  limitadas y sus fallos nunca deben detener inferencia ni el envio de alertas.
 - Conservar timestamps y estados invalidos hasta las metricas. Una falla de
   inferencia no equivale a cero personas.
 - ROI y lineas tienen coordenadas normalizadas; comprobar convencion geometrica
@@ -51,6 +57,7 @@ python3 -m unittest discover -s tests -p 'test_pipeline.py' -v
 python3 -m unittest discover -s tests -p 'test_regions.py' -v
 python3 -m unittest discover -s tests -p 'test_dataset_capture.py' -v
 python3 -m unittest discover -s tests -p 'test_export_capture_batch.py' -v
+python3 -m unittest discover -s tests -p 'test_alert_evidence.py' -v
 ```
 Las pruebas simuladas no validan el engine en esta Jetson. Reportar por separado
 pruebas de logica y mediciones de hardware con configuracion reproducible.

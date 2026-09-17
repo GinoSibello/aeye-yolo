@@ -145,6 +145,7 @@ class StaffingStateMachine:
                 self.alert_sent = True
                 alert = {
                     "type": "staffing_alert",
+                    "kind": self.confirmed_status,
                     "camera_id": self.camera["id"],
                     "camera_name": self.camera["name"],
                     "zone": self.camera.get("zone", ""),

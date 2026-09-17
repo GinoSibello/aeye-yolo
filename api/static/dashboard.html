@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>AEYE Actividad</title>
-  <link rel="stylesheet" href="/assets/dashboard.css?v=20260915-pdf-portrait">
+  <link rel="stylesheet" href="/assets/dashboard.css?v=20260916-alert-evidence">
 </head>
 <body>
   <header class="topbar">
@@ -35,6 +35,8 @@
           role="tab" aria-selected="false">Mensual</button>
         <button id="daily-mode" class="period-option" type="button"
           role="tab" aria-selected="false">Diario</button>
+        <button id="evidence-mode" class="period-option" type="button"
+          role="tab" aria-selected="false">Evidencias</button>
       </div>
       <label id="date-label" for="report-date">Semana que contiene</label>
       <input id="report-date" type="date">
@@ -136,6 +138,57 @@
         </section>
       </div>
     </details>
+
+    <section id="evidence-view" class="evidence-view hidden"
+      aria-labelledby="evidence-title">
+      <header class="evidence-heading">
+        <div>
+          <p class="eyebrow">Alertas de faltantes</p>
+          <h2 id="evidence-title">Evidencias visuales</h2>
+          <p class="muted">
+            Secuencias anónimas de 30 segundos antes y después de la alerta.
+          </p>
+        </div>
+        <label for="evidence-camera">Cámara
+          <select id="evidence-camera">
+            <option value="">Todas</option>
+          </select>
+        </label>
+      </header>
+      <div id="evidence-summary" class="evidence-summary" aria-live="polite"></div>
+      <div id="evidence-list" class="evidence-list"></div>
+    </section>
+
+    <dialog id="evidence-dialog" class="evidence-dialog"
+      aria-labelledby="evidence-dialog-title">
+      <div class="evidence-dialog-heading">
+        <div>
+          <p class="eyebrow">Evidencia de alerta</p>
+          <h2 id="evidence-dialog-title">Detalle</h2>
+          <p id="evidence-dialog-meta" class="muted"></p>
+        </div>
+        <button id="evidence-close" class="evidence-close" type="button"
+          aria-label="Cerrar evidencia">×</button>
+      </div>
+      <div id="evidence-player-status" class="notice warning hidden"
+        role="status"></div>
+      <div class="evidence-player">
+        <img id="evidence-frame" alt="Frame de evidencia de alerta">
+        <p id="evidence-frame-label" class="evidence-frame-label"></p>
+      </div>
+      <div class="evidence-controls">
+        <button id="evidence-previous" class="button evidence-button"
+          type="button">Anterior</button>
+        <button id="evidence-play" class="button evidence-button"
+          type="button">Reproducir</button>
+        <button id="evidence-next" class="button evidence-button"
+          type="button">Siguiente</button>
+        <input id="evidence-range" type="range" min="0" max="0" value="0"
+          aria-label="Posición temporal de la evidencia">
+      </div>
+      <div id="evidence-thumbnails" class="evidence-thumbnails"
+        aria-label="Frames cercanos"></div>
+    </dialog>
 
     <section id="weekly-view" aria-labelledby="weekly-title">
       <article id="weekly-sheet" class="weekly-sheet">
@@ -388,6 +441,6 @@
     <span>AEYE</span>
     <span>Conteos agregados sin identificación de empleados</span>
   </footer>
-  <script src="/assets/dashboard.js?v=20260915-pdf-portrait" defer></script>
+  <script src="/assets/dashboard.js?v=20260916-alert-evidence" defer></script>
 </body>
 </html>

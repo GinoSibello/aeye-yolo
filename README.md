@@ -250,22 +250,26 @@ de inferencia.
   "post_seconds": 2.0,
   "prolonged_interval_seconds": 10.0,
   "audit_interval_seconds": 300.0,
-  "quota_per_camera": 500,
+  "collection_window_minutes": 120.0,
+  "quota_per_camera_per_window": 50,
   "queue_size": 64,
   "min_free_gb": 5.0
 }
 ~~~
 
-Cada evento guarda dos segundos previos y posteriores a 2 FPS, una muestra
-inicial, reapariciones dentro del contexto posterior y una muestra cada diez
-segundos de presencia prolongada. La auditoria de cinco minutos solo corre
-dentro de los `workdays` y `shifts` efectivos de cada camara, incluida la
-pertenencia al dia laboral cuando el turno cruza medianoche.
+Cada turno efectivo se divide, desde su hora de inicio, en ventanas consecutivas
+de 120 minutos; la ultima se recorta al final del turno. Por camara se guardan
+como maximo 50 imagenes unicas en cada ventana, espaciando muestras programadas
+durante toda su duracion. Al alcanzar 50, esa camara pausa hasta la ventana
+siguiente. Las capturas de evento conservan dos segundos previos y posteriores a
+2 FPS, reapariciones y presencia prolongada, y consumen la misma cuota. La
+auditoria de cinco minutos tambien queda limitada a los `workdays` y `shifts`
+efectivos, incluida la pertenencia al dia laboral al cruzar medianoche.
 
 Los JPEG usan calidad 92. La metadata JSON separada contiene camara, timestamp,
 secuencia, evento anonimo, motivo, engine, umbral y cajas/confianzas del modelo;
 no guarda URL, IP, credenciales ni identidad. El indice persistente deduplica
-por sesion/camara/secuencia y SHA-256, conserva la cuota entre reinicios y
+por sesion/camara/secuencia y SHA-256, conserva la cuota de cada ventana entre reinicios y
 registra en `status.json` si el recolector se detuvo por poco disco o por un
 error de escritura. Ese freno afecta solo al dataset: la inferencia continua.
 
@@ -536,6 +540,44 @@ closure_reason=process_restart; el tiempo apagado no se inventa. Las alertas se
 escriben en logs/alerts.jsonl, sus imágenes en logs/alert_images/ y, cuando
 alerts.mode es webhook, también se envían por HTTP POST.
 
+#### Evidencia visual de alertas de faltantes
+
+La captura de evidencia es opcional y viene deshabilitada. Conserva por cámara
+JPEG originales de frames que terminaron inferencia correctamente: 30 segundos
+anteriores y 30 posteriores, a 1 FPS. Solo una alerta efectivamente emitida con
+`kind: missing` inicia un evento; una alerta de sobrantes no lo hace. El JPEG
+único de `logs/alert_images/` y su `image_path` se mantienen por compatibilidad.
+
+Compresión y escritura usan colas limitadas independientes del ciclo de
+inferencia. Cada evento queda bajo
+`logs/alert_evidence/AAAA-MM-DD/<evidence_id>/`, con `frames/` y un
+`manifest.json` atómico. El manifiesto contiene cámara, tiempos, secuencias,
+posición relativa, conteos agregados, rango esperado, cobertura, descartes y
+SHA-256; no guarda RTSP, IP, credenciales, tracks ni identidad. Sus estados son
+`collecting`, `complete`, `interrupted` y `failed`.
+
+~~~json
+"evidence": {
+  "enabled": false,
+  "root": "logs/alert_evidence",
+  "sample_fps": 1,
+  "pre_seconds": 30,
+  "post_seconds": 30,
+  "jpeg_quality": 92,
+  "input_queue_size": 128,
+  "write_queue_size": 512,
+  "retention_days": 30,
+  "min_free_gb": 5,
+  "cleanup_target_free_gb": 6
+}
+~~~
+
+Al iniciar se marcan como `interrupted` los eventos que habían quedado activos.
+Solo los eventos `complete` vencidos se eliminan automáticamente. Si el disco
+baja de 5 GB, se borran eventos completos desde el más antiguo hasta recuperar
+6 GB; nunca se borran eventos activos, datasets, bases ni otros logs. Si no hay
+espacio recuperable, falla esa evidencia y las alertas e inferencia continúan.
+
 ### Dashboard y API
 
 El dashboard muestra períodos diarios, semanales de lunes a domingo y meses
@@ -543,6 +585,8 @@ calendario. Incluye una vista general y detalle por cámara, ocupación horaria,
 cobertura, eventos y evolución. La exportación semanal/mensual ofrece PNG; la
 opción PDF usa la impresión A4 vertical del navegador: primero muestra el
 resumen general y después el detalle de cada cámara en el orden de las pestañas.
+El modo **Evidencias** filtra por fecha y cámara y reproduce los JPEG a 1 FPS;
+actualiza los eventos `collecting`. Las imágenes no se incluyen en PNG ni PDF.
 
 Rutas de reportes:
 
@@ -552,6 +596,9 @@ Rutas de reportes:
 - GET /api/reports/weekly?week=AAAA-MM-DD
 - GET /api/reports/monthly?month=AAAA-MM-DD
 - GET /api/reports/daily.csv?day=AAAA-MM-DD
+- GET /api/alert-evidence?day=AAAA-MM-DD&camera_id=...&offset=0&limit=50
+- GET /api/alert-evidence/{evidence_id}
+- GET /api/alert-evidence/{evidence_id}/frames/{frame_id}
 
 Consultas analíticas:
 

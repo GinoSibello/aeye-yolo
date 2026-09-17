@@ -16,13 +16,17 @@ from metrics.access import AccessRecorder
 from metrics.performance import PerformanceMonitor
 from metrics.recorder import MetricsRecorder
 from metrics.reporting_config import (
+    capture_collection_window,
     prepare_cameras,
     staffing_active,
     sync_reporting_configuration,
-    within_work_shift,
 )
 from metrics.staffing import StaffingStateMachine
 from preview.state import build_preview_payload
+from vision.alert_evidence import (
+    AlertEvidenceCollector,
+    parse_alert_evidence_settings,
+)
 from vision.batching import BatchScheduler, parse_batching_settings
 from vision.capture import open_capture, parse_capture_settings
 from vision.detector import (
@@ -468,11 +472,15 @@ def main():
     batching_settings = parse_batching_settings(system_cfg)
     pipeline_settings = parse_pipeline_settings(system_cfg)
     dataset_capture_settings = parse_dataset_capture_settings(system_cfg)
+    alert_evidence_settings = parse_alert_evidence_settings(
+        alert_cfg, project_dir=Path(__file__).resolve().parent
+    )
     repository = None
     metrics_recorder = None
     access_recorder = None
     reporting_rows = None
     dataset_collector = None
+    alert_evidence_collector = None
     if database_cfg.get("enabled", True):
         db_path = os.environ.get("AEYE_DB_PATH", database_cfg.get("path", str(LOG_DIR / "aeye.db")))
         repository = Repository(db_path)
@@ -520,8 +528,21 @@ def main():
         "result_transfer": pipeline_settings.result_transfer,
         "dataset_capture_enabled": dataset_capture_settings.enabled,
         "dataset_capture_queue_size": dataset_capture_settings.queue_size,
-        "dataset_capture_quota_per_camera": (
-            dataset_capture_settings.quota_per_camera
+        "dataset_capture_window_minutes": (
+            dataset_capture_settings.collection_window_minutes
+        ),
+        "dataset_capture_quota_per_camera_per_window": (
+            dataset_capture_settings.quota_per_camera_per_window
+        ),
+        "alert_evidence_enabled": alert_evidence_settings.enabled,
+        "alert_evidence_sample_fps": alert_evidence_settings.sample_fps,
+        "alert_evidence_pre_seconds": alert_evidence_settings.pre_seconds,
+        "alert_evidence_post_seconds": alert_evidence_settings.post_seconds,
+        "alert_evidence_input_queue_capacity": (
+            alert_evidence_settings.input_queue_size
+        ),
+        "alert_evidence_write_queue_capacity": (
+            alert_evidence_settings.write_queue_size
         ),
     }
 
@@ -551,10 +572,29 @@ def main():
             log(
                 "Captura de dataset habilitada en "
                 f"{dataset_collector.root} "
-                f"cuota={dataset_capture_settings.quota_per_camera}/camara"
+                "cuota="
+                f"{dataset_capture_settings.quota_per_camera_per_window}"
+                f"/camara/{dataset_capture_settings.collection_window_minutes:g}min"
             )
         except Exception as error:
             log(f"Captura de dataset no iniciada: {type(error).__name__}: {error}")
+    if alert_evidence_settings.enabled:
+        try:
+            alert_evidence_collector = AlertEvidenceCollector(
+                alert_evidence_settings, logger=log
+            )
+            log(
+                "Evidencia de alertas habilitada en "
+                f"{alert_evidence_collector.root} "
+                f"fps={alert_evidence_settings.sample_fps:g} "
+                f"pre={alert_evidence_settings.pre_seconds:g}s "
+                f"post={alert_evidence_settings.post_seconds:g}s"
+            )
+        except Exception as error:
+            log(
+                "Evidencia de alertas no iniciada: "
+                f"{type(error).__name__}: {error}"
+            )
 
     readers = {}
     trackers = {}
@@ -753,8 +793,10 @@ def main():
                         captured_wall_at,
                         frame,
                         detections,
-                        audit_allowed=within_work_shift(
-                            reporting_by_id[cam_id], captured_wall_at
+                        collection_window=capture_collection_window(
+                            reporting_by_id[cam_id],
+                            captured_wall_at,
+                            dataset_capture_settings.collection_window_minutes,
                         ),
                     )
                 try:
@@ -781,9 +823,10 @@ def main():
                 boxes = [track.box for track in tracks]
                 ids = [track.track_id for track in tracks]
                 raw_count = len(tracks)
+                monitoring_active = staffing_active(reporting_by_id[cam_id])
                 observation = rules[cam_id].evaluate(
                     raw_count,
-                    monitoring=staffing_active(reporting_by_id[cam_id]),
+                    monitoring=monitoring_active,
                 )
                 count = observation.smoothed_count
                 rule_state = observation.rule_state
@@ -815,9 +858,30 @@ def main():
                         cam, observation, track_ids=ids
                     )
 
-                if observation.alert:
-                    detail = dict(observation.alert)
+                detail = dict(observation.alert) if observation.alert else None
+                if detail:
                     detail["timestamp"] = now_iso()
+                if alert_evidence_collector:
+                    try:
+                        evidence = alert_evidence_collector.observe(
+                            cam_id,
+                            seq,
+                            captured_wall_at,
+                            frame,
+                            raw_people=raw_count,
+                            people=count,
+                            alert=detail,
+                            monitoring=monitoring_active,
+                        )
+                        if detail is not None and evidence is not None:
+                            detail["evidence"] = evidence
+                    except Exception as error:
+                        log(
+                            f"{cam_id} ERROR en evidencia de alerta: "
+                            f"{type(error).__name__}: {error}"
+                        )
+
+                if detail:
                     if metrics_recorder:
                         metrics_recorder.mark_alerted(cam_id)
                     try:
@@ -935,6 +999,17 @@ def main():
             log(
                 f"Captura de dataset cerrada: drenada={drained} "
                 f"guardadas={capture_status['saved']}"
+            )
+        if alert_evidence_collector:
+            drained = alert_evidence_collector.close(timeout=10)
+            evidence_status = alert_evidence_collector.snapshot()
+            performance_configuration["alert_evidence_runtime"] = (
+                evidence_status
+            )
+            log(
+                f"Evidencia de alertas cerrada: drenada={drained} "
+                f"completas={evidence_status['events_completed']} "
+                f"fallidas={evidence_status['events_failed']}"
             )
         try:
             written_path = performance_monitor.write(

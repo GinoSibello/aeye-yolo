@@ -32,7 +32,8 @@ class DatasetCaptureSettings:
     post_seconds: float = 2.0
     prolonged_interval_seconds: float = 10.0
     audit_interval_seconds: float = 300.0
-    quota_per_camera: int = 500
+    collection_window_minutes: float = 120.0
+    quota_per_camera_per_window: int = 50
     queue_size: int = 64
     min_free_bytes: int = 5 * 1024**3
 
@@ -52,6 +53,9 @@ class CaptureTask:
     event_id: str | None
     reason: str
     frame_key: tuple
+    collection_window_id: str
+    collection_window_start: str
+    collection_window_end: str
 
 
 @dataclass
@@ -65,6 +69,7 @@ class CameraCaptureState:
     last_presence_sample_at: float | None = None
     last_context_sample_at: float | None = None
     last_audit_at: float | None = None
+    collection_window_id: str | None = None
 
 
 class LowDiskError(RuntimeError):
@@ -81,10 +86,12 @@ def parse_dataset_capture_settings(system_cfg):
             raise ValueError(f"dataset_capture.{name} debe ser mayor que cero")
         return value
 
-    quota = int(values.get("quota_per_camera", 500))
+    quota = int(values.get("quota_per_camera_per_window", 50))
     queue_size = int(values.get("queue_size", 64))
     if quota < 1:
-        raise ValueError("dataset_capture.quota_per_camera debe ser al menos 1")
+        raise ValueError(
+            "dataset_capture.quota_per_camera_per_window debe ser al menos 1"
+        )
     if queue_size < 1:
         raise ValueError("dataset_capture.queue_size debe ser al menos 1")
     min_free_gb = float(values.get("min_free_gb", 5.0))
@@ -101,7 +108,8 @@ def parse_dataset_capture_settings(system_cfg):
             "prolonged_interval_seconds", 10.0
         ),
         audit_interval_seconds=positive("audit_interval_seconds", 300.0),
-        quota_per_camera=quota,
+        collection_window_minutes=positive("collection_window_minutes", 120.0),
+        quota_per_camera_per_window=quota,
         queue_size=queue_size,
         min_free_bytes=int(min_free_gb * 1024**3),
     )
@@ -155,6 +163,8 @@ class DatasetCaptureCollector:
         self._reserved_frame_keys = set()
         self._saved_by_camera = {}
         self._pending_by_camera = {}
+        self._saved_by_window = {}
+        self._pending_by_window = {}
         self._disabled_reason = None
         self._counters = {
             "saved": 0,
@@ -192,6 +202,10 @@ class DatasetCaptureCollector:
                 "disabled_reason": self._disabled_reason,
                 "queue_size": self._queue.qsize(),
                 "saved_by_camera": dict(self._saved_by_camera),
+                "saved_by_window": {
+                    f"{camera_id}|{window_id}": count
+                    for (camera_id, window_id), count in self._saved_by_window.items()
+                },
                 **self._counters,
             }
 
@@ -212,6 +226,9 @@ class DatasetCaptureCollector:
                     session_id = str(row["session_id"])
                     frame_seq = int(row["frame_seq"])
                     timestamp = datetime.fromisoformat(row["timestamp"])
+                    collection_window_id = str(
+                        row.get("collection_window_id") or "legacy"
+                    )
                 except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
                     raise ValueError(
                         f"Indice de captura invalido en linea {line_number}"
@@ -220,6 +237,10 @@ class DatasetCaptureCollector:
                 self._seen_frame_keys.add((session_id, camera_id, frame_seq))
                 self._saved_by_camera[camera_id] = (
                     self._saved_by_camera.get(camera_id, 0) + 1
+                )
+                window_key = (camera_id, collection_window_id)
+                self._saved_by_window[window_key] = (
+                    self._saved_by_window.get(window_key, 0) + 1
                 )
                 if "audit" in str(row.get("reason", "")).split("+"):
                     state = self._state(camera_id)
@@ -238,6 +259,10 @@ class DatasetCaptureCollector:
                 "disabled_reason": self._disabled_reason,
                 "updated_at": datetime.now().astimezone().isoformat(),
                 "saved_by_camera": dict(self._saved_by_camera),
+                "saved_by_window": {
+                    f"{camera_id}|{window_id}": count
+                    for (camera_id, window_id), count in self._saved_by_window.items()
+                },
                 "counters": dict(self._counters),
             }
 
@@ -283,7 +308,7 @@ class DatasetCaptureCollector:
         timestamp,
         frame,
         detections,
-        audit_allowed,
+        collection_window,
     ):
         """Recibe un frame ya inferido y no espera por JPEG, disco ni cola."""
         if not self.enabled:
@@ -292,8 +317,27 @@ class DatasetCaptureCollector:
             if timestamp.tzinfo is None or timestamp.utcoffset() is None:
                 raise ValueError("timestamp de captura debe incluir zona horaria")
             camera_id = str(camera_id)
+            if collection_window is None:
+                self._states.pop(camera_id, None)
+                return
+
             epoch = timestamp.timestamp()
+            window_id = str(collection_window["id"])
+            window_start = collection_window["start"]
+            window_end = collection_window["end"]
+            if (
+                window_start.tzinfo is None
+                or window_end.tzinfo is None
+                or not window_start <= timestamp.astimezone(window_start.tzinfo)
+                < window_end
+            ):
+                raise ValueError("ventana de captura invalida para el timestamp")
+
             state = self._state(camera_id)
+            if state.collection_window_id != window_id:
+                state = CameraCaptureState(collection_window_id=window_id)
+                self._states[camera_id] = state
+
             cutoff = epoch - self.settings.pre_seconds
             while state.prebuffer and state.prebuffer[0][0] < cutoff:
                 state.prebuffer.popleft()
@@ -317,7 +361,12 @@ class DatasetCaptureCollector:
                     state.last_presence_sample_at = epoch
                     current_event_id = state.event_id
                     for _, candidate in list(state.prebuffer):
-                        self._submit(candidate, state.event_id, "pre_context")
+                        self._submit(
+                            candidate,
+                            state.event_id,
+                            "pre_context",
+                            collection_window,
+                        )
                     current_reasons.append("presence_start")
                     clear_prebuffer = True
                 elif not state.present:
@@ -360,12 +409,28 @@ class DatasetCaptureCollector:
                     state.last_context_sample_at = None
                     current_event_id = None
 
-            if audit_allowed and (
+            if (
                 state.last_audit_at is None
                 or epoch - state.last_audit_at
                 >= self.settings.audit_interval_seconds
             ):
                 current_reasons.append("audit")
+
+            window_key = (camera_id, window_id)
+            with self._lock:
+                accepted = (
+                    self._saved_by_window.get(window_key, 0)
+                    + self._pending_by_window.get(window_key, 0)
+                )
+            scheduled_interval = (
+                float(collection_window["duration_seconds"])
+                / self.settings.quota_per_camera_per_window
+            )
+            if (
+                accepted < self.settings.quota_per_camera_per_window
+                and epoch >= window_start.timestamp() + accepted * scheduled_interval
+            ):
+                current_reasons.append("scheduled")
 
             interval = 1.0 / self.settings.sample_fps
             needs_buffer = (
@@ -383,6 +448,7 @@ class DatasetCaptureCollector:
                     candidate,
                     current_event_id,
                     "+".join(sorted(set(current_reasons))),
+                    collection_window,
                 )
                 if submitted and "audit" in current_reasons:
                     state.last_audit_at = epoch
@@ -398,12 +464,14 @@ class DatasetCaptureCollector:
                 self._counters["write_errors"] += 1
             self._disable(f"collector_error:{type(error).__name__}:{error}")
 
-    def _submit(self, candidate, event_id, reason):
+    def _submit(self, candidate, event_id, reason, collection_window):
         frame_key = (
             self.session_id,
             candidate.camera_id,
             candidate.frame_seq,
         )
+        window_id = str(collection_window["id"])
+        window_key = (candidate.camera_id, window_id)
         with self._lock:
             if self._disabled_reason is not None:
                 return False
@@ -413,19 +481,33 @@ class DatasetCaptureCollector:
             ):
                 self._counters["duplicate_frame"] += 1
                 return False
-            saved = self._saved_by_camera.get(candidate.camera_id, 0)
-            pending = self._pending_by_camera.get(candidate.camera_id, 0)
-            if saved + pending >= self.settings.quota_per_camera:
+            saved = self._saved_by_window.get(window_key, 0)
+            pending = self._pending_by_window.get(window_key, 0)
+            if (
+                saved + pending
+                >= self.settings.quota_per_camera_per_window
+            ):
                 self._counters["quota_reached"] += 1
                 return False
-            task = CaptureTask(candidate, event_id, reason, frame_key)
+            task = CaptureTask(
+                candidate=candidate,
+                event_id=event_id,
+                reason=reason,
+                frame_key=frame_key,
+                collection_window_id=window_id,
+                collection_window_start=collection_window["start"].isoformat(),
+                collection_window_end=collection_window["end"].isoformat(),
+            )
             try:
                 self._queue.put_nowait(task)
             except queue.Full:
                 self._counters["queue_full"] += 1
                 return False
             self._reserved_frame_keys.add(frame_key)
-            self._pending_by_camera[candidate.camera_id] = pending + 1
+            self._pending_by_camera[candidate.camera_id] = (
+                self._pending_by_camera.get(candidate.camera_id, 0) + 1
+            )
+            self._pending_by_window[window_key] = pending + 1
             return True
 
     def _writer_loop(self):
@@ -450,6 +532,11 @@ class DatasetCaptureCollector:
                     camera_id = task.candidate.camera_id
                     self._pending_by_camera[camera_id] = max(
                         0, self._pending_by_camera.get(camera_id, 1) - 1
+                    )
+                    window_key = (camera_id, task.collection_window_id)
+                    self._pending_by_window[window_key] = max(
+                        0,
+                        self._pending_by_window.get(window_key, 1) - 1,
                     )
                     self._reserved_frame_keys.discard(task.frame_key)
                     if completed:
@@ -501,6 +588,9 @@ class DatasetCaptureCollector:
             "frame_seq": task.candidate.frame_seq,
             "event_id": task.event_id,
             "reason": task.reason,
+            "collection_window_id": task.collection_window_id,
+            "collection_window_start": task.collection_window_start,
+            "collection_window_end": task.collection_window_end,
             "engine": self.engine,
             "confidence": self.confidence,
             "boxes": task.candidate.boxes,
@@ -516,6 +606,9 @@ class DatasetCaptureCollector:
             "frame_seq": task.candidate.frame_seq,
             "event_id": task.event_id,
             "reason": task.reason,
+            "collection_window_id": task.collection_window_id,
+            "collection_window_start": task.collection_window_start,
+            "collection_window_end": task.collection_window_end,
             "sha256": sha256,
             "image": image_relative,
             "metadata": metadata_relative,
@@ -558,6 +651,10 @@ class DatasetCaptureCollector:
             camera_id = task.candidate.camera_id
             self._saved_by_camera[camera_id] = (
                 self._saved_by_camera.get(camera_id, 0) + 1
+            )
+            window_key = (camera_id, task.collection_window_id)
+            self._saved_by_window[window_key] = (
+                self._saved_by_window.get(window_key, 0) + 1
             )
             self._counters["saved"] += 1
 

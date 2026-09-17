@@ -351,6 +351,59 @@ def within_work_shift(settings, at=None):
     return False
 
 
+def capture_collection_window(settings, at=None, window_minutes=120.0):
+    """Devuelve la ventana recurrente que contiene al instante, o None.
+
+    Las ventanas se anclan al inicio de cada turno y la ultima se recorta al
+    final del turno. El identificador incluye el dia laboral, no solamente la
+    fecha calendario, para que los turnos que cruzan medianoche sean estables.
+    """
+    duration = float(window_minutes)
+    if duration <= 0:
+        raise ValueError("window_minutes debe ser mayor que cero")
+    if not settings.get("shifts"):
+        return None
+    current = at or datetime.now().astimezone()
+    local = current.astimezone(ZoneInfo(settings["timezone"]))
+    window_delta = timedelta(minutes=duration)
+    for offset in (0, -1):
+        workday = local.date() + timedelta(days=offset)
+        if workday.weekday() not in settings["workdays"]:
+            continue
+        for shift_index, shift in enumerate(settings["shifts"]):
+            start_hour, start_minute = (
+                int(part) for part in shift["start"].split(":", 1)
+            )
+            end_hour, end_minute = (
+                int(part) for part in shift["end"].split(":", 1)
+            )
+            start = datetime.combine(
+                workday, time(start_hour, start_minute), local.tzinfo
+            )
+            end = datetime.combine(
+                workday, time(end_hour, end_minute), local.tzinfo
+            )
+            if end <= start:
+                end += timedelta(days=1)
+            if not start <= local < end:
+                continue
+            elapsed = local - start
+            window_index = int(elapsed // window_delta)
+            window_start = start + window_index * window_delta
+            window_end = min(window_start + window_delta, end)
+            shift_id = str(shift.get("id") or f"shift_{shift_index + 1}")
+            return {
+                "id": f"{workday.isoformat()}:{shift_id}:{window_index}",
+                "workday": workday.isoformat(),
+                "shift_id": shift_id,
+                "index": window_index,
+                "start": window_start,
+                "end": window_end,
+                "duration_seconds": (window_end - window_start).total_seconds(),
+            }
+    return None
+
+
 def staffing_active(settings, at=None):
     """Indica si una regla de dotacion debe vigilarse en este instante."""
     return settings["role"] == "workstation" and within_work_shift(settings, at)

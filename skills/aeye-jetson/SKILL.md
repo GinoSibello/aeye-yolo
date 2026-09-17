@@ -42,6 +42,9 @@ run_stage2_nvdec.sh, run_stage3_batching.sh, run_stage4_pipeline.sh,
 run_stage5_operational.sh y run_stage5_accuracy.sh (todos bajo tools/).
 Medir igual duracion, camaras, resolucion, carga, potencia y calentamiento;
 comparar FPS, latencia/edad de frame, descartes, memoria y temperatura.
+Antes de activar evidencia visual, comparar con las mismas camaras y condiciones:
+FPS solicitado sostenido, latencia p95 no mayor a 10 %, RAM estable tras llenar
+buffers y cero descartes en ambas colas. Guardar temperatura y potencia.
 No lanzar ensayos largos, exportaciones o cambios nvpmodel/jetson_clocks sin
 ventana autorizada. No habilitar INT8 por mejora de FPS sin validar precision.
 

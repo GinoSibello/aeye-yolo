@@ -23,7 +23,9 @@ no asumir que el ejemplo representa todas las camaras.
 - `shifts[]` convive con el formato anterior `shift`/`meal`; revisar la
   precedencia de overrides globales y por camara, no solo campos aplanados.
 - Fin 00:00 corresponde al dia siguiente cuando el turno cruza medianoche.
-  Respetar workdays, zona horaria y pertenencia al dia laboral.
+  Respetar workdays, zona horaria y pertenencia al dia laboral. Las ventanas
+  operativas recurrentes se anclan al inicio de cada turno y recortan su ultimo
+  bloque al final del turno.
 - Almuerzo solo donde este configurado. No inventar pausa para otro turno.
 - Cupo simultaneo no es cantidad de personas unicas ni suma de plazas de turnos.
 - Tardanzas/salidas se estiman por plazas faltantes y ventanas observadas.
@@ -33,6 +35,9 @@ no asumir que el ejemplo representa todas las camaras.
   `pending`, no ausencia de datos ni ausencia de personas.
 - Acceso al bano y comedor se analiza de forma anonima e independiente.
   FIFO o track visible no prueba duracion individual ni puesto de procedencia.
+- La evidencia visual se dispara al emitir una alerta `missing`, no al abrir el
+  incidente ni para `extra`. Su manifiesto conserva conteos agregados y contexto
+  operativo, nunca tracks, identidad ni una explicacion causal de la ausencia.
 
 ## Antes de aceptar una metrica
 Definir numerador, denominador, unidad, rango temporal, cobertura y tolerancia.

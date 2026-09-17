@@ -6,6 +6,7 @@ const elements = {
   weeklyMode: document.querySelector("#weekly-mode"),
   monthlyMode: document.querySelector("#monthly-mode"),
   dailyMode: document.querySelector("#daily-mode"),
+  evidenceMode: document.querySelector("#evidence-mode"),
   weeklyView: document.querySelector("#weekly-view"),
   dailyView: document.querySelector("#daily-view"),
   cameraView: document.querySelector("#camera-view"),
@@ -52,6 +53,23 @@ const elements = {
   cameraEvents: document.querySelector("#camera-events"),
   cameraDailyEvents: document.querySelector("#camera-daily-events"),
   cameraAudit: document.querySelector("#camera-audit"),
+  reportHelp: document.querySelector("#report-help"),
+  evidenceView: document.querySelector("#evidence-view"),
+  evidenceCamera: document.querySelector("#evidence-camera"),
+  evidenceSummary: document.querySelector("#evidence-summary"),
+  evidenceList: document.querySelector("#evidence-list"),
+  evidenceDialog: document.querySelector("#evidence-dialog"),
+  evidenceDialogTitle: document.querySelector("#evidence-dialog-title"),
+  evidenceDialogMeta: document.querySelector("#evidence-dialog-meta"),
+  evidencePlayerStatus: document.querySelector("#evidence-player-status"),
+  evidenceFrame: document.querySelector("#evidence-frame"),
+  evidenceFrameLabel: document.querySelector("#evidence-frame-label"),
+  evidencePrevious: document.querySelector("#evidence-previous"),
+  evidencePlay: document.querySelector("#evidence-play"),
+  evidenceNext: document.querySelector("#evidence-next"),
+  evidenceRange: document.querySelector("#evidence-range"),
+  evidenceThumbnails: document.querySelector("#evidence-thumbnails"),
+  evidenceClose: document.querySelector("#evidence-close"),
 };
 
 const statusText = {
@@ -73,6 +91,12 @@ let latestReport = null;
 let latestWeeklyReport = null;
 let downloadStatusTimer = null;
 let printDocumentTitle = null;
+let latestEvidence = null;
+let evidenceFrames = [];
+let evidenceFrameIndex = 0;
+let evidencePlaybackTimer = null;
+let evidencePollTimer = null;
+let openEvidenceId = null;
 
 function localISODate(value = new Date()) {
   const offset = value.getTimezoneOffset() * 60000;
@@ -1075,15 +1099,256 @@ function renderCamera(row, report = latestReport, target = elements) {
   }
 }
 
+function evidenceStatusLabel(status) {
+  return {
+    complete: "Completa",
+    collecting: "Recolectando",
+    interrupted: "Interrumpida",
+    failed: "Fallida",
+  }[status] || status || "Pendiente";
+}
+
+function evidenceTime(value) {
+  return value
+    ? new Date(value).toLocaleString("es-AR", {
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    })
+    : "Hora pendiente";
+}
+
+function renderEvidenceCameraOptions(cameras) {
+  const selected = elements.evidenceCamera.value;
+  elements.evidenceCamera.innerHTML = [
+    '<option value="">Todas</option>',
+    ...(cameras || []).map((camera) =>
+      `<option value="${escapeHTML(camera.camera_id)}">${escapeHTML(
+        camera.camera_name || camera.camera_id
+      )}</option>`
+    ),
+  ].join("");
+  if ([...elements.evidenceCamera.options].some(
+    (option) => option.value === selected
+  )) {
+    elements.evidenceCamera.value = selected;
+  }
+}
+
+function evidenceCard(row) {
+  const cover = row.cover_url
+    ? `<img src="${escapeHTML(row.cover_url)}" loading="lazy"
+        alt="Portada de evidencia de ${escapeHTML(row.camera_name)}">`
+    : '<span class="muted">Portada pendiente</span>';
+  return `<article class="evidence-card">
+    <div class="evidence-card-cover">${cover}</div>
+    <div class="evidence-card-body">
+      <div class="evidence-card-title">
+        <h3>${escapeHTML(row.camera_name || row.camera_id)}</h3>
+        <span class="evidence-status ${escapeHTML(row.status)}">
+          ${escapeHTML(evidenceStatusLabel(row.status))}
+        </span>
+      </div>
+      <p class="evidence-card-facts">
+        ${escapeHTML(evidenceTime(row.alert_at))} ·
+        ${escapeHTML(row.camera_id)}<br>
+        Personas: ${escapeHTML(display(row.people, "", 0))} ·
+        esperado: ${escapeHTML(display(row.expected_min, "", 0))}–${escapeHTML(
+          display(row.expected_max, "", 0)
+        )}<br>
+        Evidencia: ${escapeHTML(display(row.frame_count, "", 0))}/${escapeHTML(
+          display(row.expected_frames, "", 0)
+        )} cuadros · ${escapeHTML(display(row.coverage_percent, "%", 1))}
+      </p>
+      <button class="button evidence-open" type="button"
+        data-evidence-id="${escapeHTML(row.evidence_id)}">Abrir evidencia</button>
+    </div>
+  </article>`;
+}
+
+function renderEvidenceList(payload) {
+  latestEvidence = payload;
+  renderEvidenceCameraOptions(payload.cameras);
+  elements.timezone.textContent = "Zona horaria registrada en cada evidencia";
+  elements.updated.textContent =
+    `Consultado ${new Date(payload.generated_at).toLocaleString("es-AR")}`;
+  const disabled = !payload.enabled
+    ? "La captura nueva está deshabilitada; se muestran evidencias existentes."
+    : "Captura de evidencias habilitada.";
+  elements.evidenceSummary.textContent =
+    `${disabled} ${payload.total} alerta(s) para esta selección.`;
+  elements.evidenceList.innerHTML = payload.items.length
+    ? payload.items.map(evidenceCard).join("")
+    : `<div class="section empty">
+        No hay evidencias de faltantes para esta fecha y cámara.
+      </div>`;
+}
+
+async function loadEvidence() {
+  elements.error.classList.add("hidden");
+  elements.evidenceList.innerHTML =
+    '<div class="section empty">Cargando evidencias…</div>';
+  elements.refresh.disabled = true;
+  elements.refresh.textContent = "Actualizando...";
+  const day = encodeURIComponent(elements.date.value);
+  const camera = elements.evidenceCamera.value;
+  const cameraQuery = camera
+    ? `&camera_id=${encodeURIComponent(camera)}` : "";
+  try {
+    const response = await fetch(
+      `/api/alert-evidence?day=${day}&limit=100${cameraQuery}`,
+      { cache: "no-store" }
+    );
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    renderEvidenceList(await response.json());
+  } catch (error) {
+    elements.error.textContent =
+      `No se pudieron cargar las evidencias: ${error.message}`;
+    elements.error.classList.remove("hidden");
+    elements.evidenceList.innerHTML = "";
+  } finally {
+    elements.refresh.disabled = false;
+    elements.refresh.textContent = "Actualizar";
+  }
+}
+
+function stopEvidencePlayback() {
+  window.clearInterval(evidencePlaybackTimer);
+  evidencePlaybackTimer = null;
+  elements.evidencePlay.textContent = "Reproducir";
+}
+
+function renderEvidenceFrame(index) {
+  if (!evidenceFrames.length) {
+    elements.evidenceFrame.removeAttribute("src");
+    elements.evidenceFrameLabel.textContent = "Sin cuadros disponibles";
+    elements.evidenceRange.max = "0";
+    elements.evidenceRange.value = "0";
+    elements.evidenceThumbnails.innerHTML = "";
+    return;
+  }
+  evidenceFrameIndex = Math.max(0, Math.min(index, evidenceFrames.length - 1));
+  const frame = evidenceFrames[evidenceFrameIndex];
+  elements.evidenceFrame.src = frame.url;
+  const relative = Number(frame.relative_seconds || 0);
+  const relativeLabel = `${relative >= 0 ? "+" : ""}${relative.toFixed(1)} s`;
+  elements.evidenceFrameLabel.textContent =
+    `${relativeLabel} · ${evidenceTime(frame.timestamp)} · ` +
+    `${display(frame.people, "", 0)} persona(s)`;
+  elements.evidenceRange.max = String(evidenceFrames.length - 1);
+  elements.evidenceRange.value = String(evidenceFrameIndex);
+  const first = Math.max(0, evidenceFrameIndex - 4);
+  const last = Math.min(evidenceFrames.length, evidenceFrameIndex + 5);
+  elements.evidenceThumbnails.innerHTML = evidenceFrames
+    .slice(first, last)
+    .map((item, offset) => {
+      const actual = first + offset;
+      return `<button class="evidence-thumbnail ${actual === evidenceFrameIndex
+        ? "active" : ""}" type="button" data-frame-index="${actual}"
+        aria-label="Ir al cuadro ${actual + 1}">
+        <img src="${escapeHTML(item.url)}" loading="lazy" alt="">
+      </button>`;
+    }).join("");
+}
+
+async function loadEvidenceDetail(evidenceId, openDialog = false) {
+  const response = await fetch(
+    `/api/alert-evidence/${encodeURIComponent(evidenceId)}`,
+    { cache: "no-store" }
+  );
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const detail = await response.json();
+  openEvidenceId = evidenceId;
+  evidenceFrames = detail.frames || [];
+  evidenceFrameIndex = Math.min(
+    evidenceFrameIndex, Math.max(0, evidenceFrames.length - 1)
+  );
+  elements.evidenceDialogTitle.textContent =
+    detail.camera_name || detail.camera_id;
+  elements.evidenceDialogMeta.textContent =
+    `${evidenceTime(detail.alert_at)} · ${evidenceStatusLabel(detail.status)} · ` +
+    `${detail.frame_count || 0}/${detail.expected_frames || 0} cuadros`;
+  elements.evidencePlayerStatus.classList.toggle(
+    "hidden", detail.status !== "collecting"
+  );
+  elements.evidencePlayerStatus.textContent =
+    "La evidencia todavía se está recolectando; esta vista se actualizará.";
+  renderEvidenceFrame(evidenceFrameIndex);
+  if (openDialog && !elements.evidenceDialog.open) {
+    elements.evidenceDialog.showModal();
+  }
+  window.clearTimeout(evidencePollTimer);
+  if (detail.status === "collecting" && elements.evidenceDialog.open) {
+    evidencePollTimer = window.setTimeout(async () => {
+      try {
+        await loadEvidenceDetail(evidenceId);
+      } catch (error) {
+        elements.evidencePlayerStatus.textContent =
+          `No se pudo actualizar: ${error.message}`;
+        elements.evidencePlayerStatus.classList.remove("hidden");
+      }
+    }, 3000);
+  }
+}
+
+async function openEvidence(evidenceId) {
+  stopEvidencePlayback();
+  evidenceFrames = [];
+  evidenceFrameIndex = 0;
+  try {
+    await loadEvidenceDetail(evidenceId, true);
+  } catch (error) {
+    elements.error.textContent =
+      `No se pudo abrir la evidencia: ${error.message}`;
+    elements.error.classList.remove("hidden");
+  }
+}
+
+function closeEvidence() {
+  stopEvidencePlayback();
+  window.clearTimeout(evidencePollTimer);
+  evidencePollTimer = null;
+  openEvidenceId = null;
+  if (elements.evidenceDialog.open) elements.evidenceDialog.close();
+}
+
+function toggleEvidencePlayback() {
+  if (evidencePlaybackTimer) {
+    stopEvidencePlayback();
+    return;
+  }
+  if (!evidenceFrames.length) return;
+  elements.evidencePlay.textContent = "Pausar";
+  evidencePlaybackTimer = window.setInterval(() => {
+    if (evidenceFrameIndex >= evidenceFrames.length - 1) {
+      stopEvidencePlayback();
+      return;
+    }
+    renderEvidenceFrame(evidenceFrameIndex + 1);
+  }, 1000);
+}
+
 function renderCurrentScope() {
+  const evidenceMode = currentMode === "evidence";
   const general = selectedCameraId === "general";
-  const longPeriod = currentMode !== "daily";
-  elements.weeklyView.classList.toggle("hidden", !general || !longPeriod);
-  elements.dailyView.classList.toggle("hidden", !general || longPeriod);
-  elements.cameraView.classList.toggle("hidden", general);
-  elements.csv.classList.toggle("hidden", currentMode !== "daily" || !general);
-  elements.image.classList.toggle("hidden", !longPeriod || !general);
-  elements.pdf.classList.toggle("hidden", !longPeriod || !general);
+  const longPeriod = currentMode === "weekly" || currentMode === "monthly";
+  elements.evidenceView.classList.toggle("hidden", !evidenceMode);
+  elements.weeklyView.classList.toggle(
+    "hidden", evidenceMode || !general || !longPeriod
+  );
+  elements.dailyView.classList.toggle(
+    "hidden", evidenceMode || !general || currentMode !== "daily"
+  );
+  elements.cameraView.classList.toggle("hidden", evidenceMode || general);
+  elements.scopeTabs.classList.toggle("hidden", evidenceMode);
+  elements.reportHelp.classList.toggle("hidden", evidenceMode);
+  elements.csv.classList.toggle(
+    "hidden", evidenceMode || currentMode !== "daily" || !general
+  );
+  elements.image.classList.toggle(
+    "hidden", evidenceMode || !longPeriod || !general
+  );
+  elements.pdf.classList.toggle(
+    "hidden", evidenceMode || !longPeriod || !general
+  );
   elements.scopeTabs.querySelectorAll("button").forEach((button) => {
     const active = button.dataset.camera === selectedCameraId;
     button.classList.toggle("active", active);
@@ -1105,6 +1370,7 @@ function setMode(mode, load = true) {
     weekly: elements.weeklyMode,
     monthly: elements.monthlyMode,
     daily: elements.dailyMode,
+    evidence: elements.evidenceMode,
   };
   Object.entries(states).forEach(([name, button]) => {
     const active = name === mode;
@@ -1113,12 +1379,17 @@ function setMode(mode, load = true) {
   });
   elements.dateLabel.textContent = mode === "weekly"
     ? "Semana que contiene"
-    : mode === "monthly" ? "Mes que contiene" : "Fecha";
+    : mode === "monthly" ? "Mes que contiene"
+      : mode === "evidence" ? "Fecha de alerta" : "Fecha";
   renderCurrentScope();
   if (load) loadReport();
 }
 
 async function loadReport() {
+  if (currentMode === "evidence") {
+    await loadEvidence();
+    return;
+  }
   const selected = elements.date.value;
   const longPeriod = currentMode !== "daily";
   elements.error.classList.add("hidden");
@@ -1333,6 +1604,34 @@ elements.date.value = localISODate();
 elements.weeklyMode.addEventListener("click", () => setMode("weekly"));
 elements.monthlyMode.addEventListener("click", () => setMode("monthly"));
 elements.dailyMode.addEventListener("click", () => setMode("daily"));
+elements.evidenceMode.addEventListener("click", () => setMode("evidence"));
+elements.evidenceCamera.addEventListener("change", loadEvidence);
+elements.evidenceList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-evidence-id]");
+  if (button) openEvidence(button.dataset.evidenceId);
+});
+elements.evidencePrevious.addEventListener("click", () => {
+  stopEvidencePlayback();
+  renderEvidenceFrame(evidenceFrameIndex - 1);
+});
+elements.evidenceNext.addEventListener("click", () => {
+  stopEvidencePlayback();
+  renderEvidenceFrame(evidenceFrameIndex + 1);
+});
+elements.evidencePlay.addEventListener("click", toggleEvidencePlayback);
+elements.evidenceRange.addEventListener("input", () => {
+  stopEvidencePlayback();
+  renderEvidenceFrame(Number(elements.evidenceRange.value));
+});
+elements.evidenceThumbnails.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-frame-index]");
+  if (button) {
+    stopEvidencePlayback();
+    renderEvidenceFrame(Number(button.dataset.frameIndex));
+  }
+});
+elements.evidenceClose.addEventListener("click", closeEvidence);
+elements.evidenceDialog.addEventListener("close", closeEvidence);
 elements.date.addEventListener("change", loadReport);
 elements.refresh.addEventListener("click", loadReport);
 elements.image.addEventListener("click", downloadWeeklyImage);

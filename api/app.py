@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from api.alert_evidence import AlertEvidenceStore, build_alert_evidence_router
 from database.repository import Repository
 from metrics.activity import ActivityAnalytics
 from metrics.analytics import Analytics
@@ -41,6 +42,15 @@ analytics = Analytics(repository)
 activity = ActivityAnalytics(repository)
 weekly_activity = WeeklyActivityAnalytics(repository)
 app = FastAPI(title="AEYE API", version="0.2.0")
+evidence_config = dict(config.get("alerts", {}).get("evidence", {}) or {})
+evidence_root = Path(evidence_config.get("root", "logs/alert_evidence"))
+if not evidence_root.is_absolute():
+    evidence_root = PROJECT_DIR / evidence_root
+alert_evidence_store = AlertEvidenceStore(
+    evidence_root,
+    enabled=bool(evidence_config.get("enabled", False)),
+)
+app.include_router(build_alert_evidence_router(alert_evidence_store))
 app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
 
 

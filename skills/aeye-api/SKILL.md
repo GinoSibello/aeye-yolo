@@ -10,6 +10,8 @@ description: Modificar o diagnosticar FastAPI de AEYE, rutas de reportes, valida
 Las consultas de actividad estan en `/api/reporting/configuration` y
 `/api/reports/daily`, `weekly`, `monthly`, ademas de `daily.csv`.
 Las consultas historicas `/api/analytics/*` pertenecen a `metrics/analytics.py`.
+`api/alert_evidence.py` sirve listados, manifiestos publicos y JPEG declarados
+por manifiesto bajo `/api/alert-evidence`; no acepta rutas del cliente.
 Verificar firmas en el archivo antes de usar parametros; no inventar endpoints.
 
 ## Flujo
@@ -42,6 +44,7 @@ como sustituto de los limites laborales.
 ```bash
 python3 -m unittest discover -s tests -p 'test_activity_reporting.py' -v
 python3 -m unittest discover -s tests -p 'test_analytics.py' -v
+python3 -m unittest discover -s tests -p 'test_alert_evidence_api.py' -v
 ```
 Estas pruebas cubren calculos, no son pruebas HTTP completas. Para cambios de
 handlers agregar solicitudes reales a una instancia aislada con fixtures;

@@ -34,6 +34,7 @@ class StaffingTest(unittest.TestCase):
         self.assertEqual(opened.staffing_status, "missing")
         alerted = rule.evaluate(0, at=90)
         self.assertIsNotNone(alerted.alert)
+        self.assertEqual(alerted.alert["kind"], "missing")
         self.assertEqual(rule.evaluate(1, at=91).rule_state, "recovering")
         recovered = rule.evaluate(1, at=106)
         self.assertEqual(recovered.transition["type"], "closed")

@@ -18,7 +18,7 @@ class ExportCaptureBatchTests(unittest.TestCase):
             DatasetCaptureSettings(
                 enabled=True,
                 root=Path(root),
-                quota_per_camera=10,
+                quota_per_camera_per_window=10,
                 min_free_bytes=0,
             ),
             engine="yolo.engine",
@@ -32,7 +32,13 @@ class ExportCaptureBatchTests(unittest.TestCase):
             at,
             np.full((16, 16, 3), value, dtype=np.uint8),
             [Detection([1, 1, 8, 14], 0.8, 0)],
-            audit_allowed=False,
+            collection_window={
+                "id": "export-window",
+                "start": at.replace(minute=0, second=0, microsecond=0),
+                "end": at.replace(minute=0, second=0, microsecond=0)
+                + timedelta(hours=2),
+                "duration_seconds": 7200.0,
+            },
         )
 
     def test_incremental_zip_contains_new_images_manifest_and_checksums(self):

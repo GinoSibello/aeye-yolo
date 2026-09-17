@@ -7,7 +7,8 @@ description: Modificar la web de AEYE Actividad o AEYE Preview, graficos, filtro
 
 ## Dos superficies
 - Actividad: `api/static/dashboard.html`, `dashboard.js`, `dashboard.css`;
-  servida por FastAPI. Tiene periodos diario/semanal/mensual y seleccion de camara.
+  servida por FastAPI. Tiene periodos diario/semanal/mensual, seleccion de camara
+  y una vista de evidencias de alertas con reproductor JPEG a 1 FPS.
 - Preview: `preview/index.html`, `preview.js`, `preview.css` y `state.py`;
   se integra con `main.py` y consulta `/preview-state.json`.
 No mezclar sus rutas ni asumir que un puerto sirve ambas interfaces.
@@ -39,6 +40,7 @@ Los estilos de impresión muestran todos los valores horarios sin scroll y
 comienzan el detalle de cada cámara en una página nueva. La hoja es A4 vertical;
 el título temporal del documento sugiere el nombre del PDF según el período.
 Los archivos se guardan en el equipo del navegador, no en una carpeta del servidor.
+La vista de evidencias y sus JPEG no forman parte de las exportaciones PNG/PDF.
 Comprobar fuentes, CSS embebido, imagenes same-origin, permisos de descarga y
 URL de blobs; capturar errores visibles. No introducir CDNs innecesarios en LAN.
 
@@ -46,6 +48,7 @@ URL de blobs; capturar errores visibles. No introducir CDNs innecesarios en LAN.
 ```bash
 python3 -m unittest discover -s tests -p 'test_weekly_dashboard.py' -v
 python3 -m unittest discover -s tests -p 'test_preview_ui.py' -v
+python3 -m unittest discover -s tests -p 'test_alert_evidence_dashboard.py' -v
 ```
 Son pruebas estructurales, no sustituyen navegador. Para cambios visuales:
 probar desktop y movil, fechas, cambio de camara y retorno; comprobar consola,

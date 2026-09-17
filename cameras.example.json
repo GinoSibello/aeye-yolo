@@ -29,7 +29,8 @@
       "post_seconds": 2.0,
       "prolonged_interval_seconds": 10.0,
       "audit_interval_seconds": 300.0,
-      "quota_per_camera": 500,
+      "collection_window_minutes": 120.0,
+      "quota_per_camera_per_window": 50,
       "queue_size": 64,
       "min_free_gb": 5.0
     },
@@ -57,7 +58,20 @@
   },
   "alerts": {
     "mode": "console",
-    "webhook_url": ""
+    "webhook_url": "",
+    "evidence": {
+      "enabled": false,
+      "root": "logs/alert_evidence",
+      "sample_fps": 1.0,
+      "pre_seconds": 30.0,
+      "post_seconds": 30.0,
+      "jpeg_quality": 92,
+      "input_queue_size": 128,
+      "write_queue_size": 512,
+      "retention_days": 30,
+      "min_free_gb": 5.0,
+      "cleanup_target_free_gb": 6.0
+    }
   },
   "database": {
     "enabled": true,
